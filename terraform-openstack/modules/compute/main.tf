@@ -17,8 +17,7 @@ resource "openstack_compute_instance_v2" "node" {
     role = each.value.role
   }
 
-  # Boot each instance from a dedicated Cinder volume.
-  # The flavor has disk=0, so no ephemeral root disk is used.
+  # Flavor disk=0, so boot from a dedicated Cinder volume.
   block_device {
     uuid                  = var.image_id
     source_type           = "image"
@@ -28,20 +27,8 @@ resource "openstack_compute_instance_v2" "node" {
     delete_on_termination = true
   }
 
+  # Attach the instance directly to the existing Public_Net.
   network {
     uuid = var.network_id
   }
-}
-
-resource "openstack_networking_floatingip_v2" "node" {
-  for_each = var.assign_floating_ip ? local.nodes : {}
-
-  pool = "Public_Net"
-}
-
-resource "openstack_compute_floatingip_associate_v2" "node" {
-  for_each = var.assign_floating_ip ? local.nodes : {}
-
-  floating_ip = openstack_networking_floatingip_v2.node[each.key].address
-  instance_id = openstack_compute_instance_v2.node[each.key].id
 }

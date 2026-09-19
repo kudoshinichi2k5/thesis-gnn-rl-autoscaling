@@ -8,9 +8,7 @@ module "security_group" {
   source = "../../modules/security-group"
 
   security_group_name = var.security_group_name
-
-  # Replace with the actual CIDR of Public_Net.
-  network_cidr = var.network_cidr
+  network_cidr        = var.network_cidr
 }
 
 module "compute" {

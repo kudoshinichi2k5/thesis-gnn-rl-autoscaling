@@ -9,26 +9,27 @@ variable "nodes" {
 }
 
 variable "network_id" {
-  description = "Network ID used by the cluster nodes."
+  description = "Existing OpenStack network ID."
   type        = string
 }
 
 variable "security_group_name" {
-  description = "Security group attached to the cluster nodes."
+  description = "Security group attached to the nodes."
   type        = string
 }
 
 variable "key_pair" {
-  description = "Existing OpenStack keypair name."
+  description = "Existing OpenStack keypair."
   type        = string
 }
 
 variable "image_id" {
-  description = "Ubuntu 22.04 image ID used for boot volumes."
+  description = "Ubuntu 22.04 image ID."
   type        = string
 }
 
 variable "assign_floating_ip" {
-  description = "Whether to assign floating IPs to instances."
+  description = "Whether to assign floating IPs."
   type        = bool
+  default     = false
 }
