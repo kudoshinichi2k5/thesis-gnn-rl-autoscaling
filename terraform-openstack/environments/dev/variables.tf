@@ -3,8 +3,13 @@ variable "network_name" {
   type        = string
 }
 
+variable "network_id" {
+  description = "Existing OpenStack network ID."
+  type        = string
+}
+
 variable "network_cidr" {
-  description = "CIDR of the existing Public_Net network."
+  description = "CIDR of the existing OpenStack network."
   type        = string
 }
 
@@ -19,7 +24,7 @@ variable "image_id" {
 }
 
 variable "security_group_name" {
-  description = "Security group name for the Kubernetes cluster."
+  description = "Kubernetes security group name."
   type        = string
 }
 
@@ -34,7 +39,7 @@ variable "nodes" {
 }
 
 variable "assign_floating_ip" {
-  description = "Whether to assign a floating IP to each instance."
+  description = "Whether to assign floating IPs."
   type        = bool
   default     = false
 }
