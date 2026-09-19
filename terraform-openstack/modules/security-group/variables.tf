@@ -4,6 +4,6 @@ variable "security_group_name" {
 }
 
 variable "network_cidr" {
-  description = "CIDR of the existing OpenStack network."
+  description = "CIDR used for internal Kubernetes traffic."
   type        = string
 }

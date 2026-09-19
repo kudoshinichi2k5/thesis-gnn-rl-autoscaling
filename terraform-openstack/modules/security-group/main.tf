@@ -25,7 +25,7 @@ resource "openstack_networking_secgroup_rule_v2" "kubernetes_api" {
   security_group_id = openstack_networking_secgroup_v2.k8s.id
 }
 
-# Kubernetes NodePort range
+# Kubernetes NodePort
 resource "openstack_networking_secgroup_rule_v2" "nodeport" {
   direction         = "ingress"
   ethertype         = "IPv4"
@@ -36,7 +36,7 @@ resource "openstack_networking_secgroup_rule_v2" "nodeport" {
   security_group_id = openstack_networking_secgroup_v2.k8s.id
 }
 
-# Flannel VXLAN between cluster nodes
+# Flannel VXLAN: internal cluster traffic only
 resource "openstack_networking_secgroup_rule_v2" "flannel_vxlan" {
   direction         = "ingress"
   ethertype         = "IPv4"
@@ -47,7 +47,7 @@ resource "openstack_networking_secgroup_rule_v2" "flannel_vxlan" {
   security_group_id = openstack_networking_secgroup_v2.k8s.id
 }
 
-# ICMP between cluster nodes
+# ICMP: internal cluster traffic only
 resource "openstack_networking_secgroup_rule_v2" "icmp_internal" {
   direction         = "ingress"
   ethertype         = "IPv4"
@@ -56,7 +56,7 @@ resource "openstack_networking_secgroup_rule_v2" "icmp_internal" {
   security_group_id = openstack_networking_secgroup_v2.k8s.id
 }
 
-# Allow all outbound traffic
+# Allow all outbound IPv4 traffic
 resource "openstack_networking_secgroup_rule_v2" "egress_all" {
   direction         = "egress"
   ethertype         = "IPv4"
