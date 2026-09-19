@@ -1,0 +1,23 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+
+# OpenStack credentials
+openstack-openrc.sh
+*.openrc
+*openrc*
+
+# Terraform variables / secrets
+*.tfvars
+*.tfvars.json
+
+# Local environment
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
