@@ -69,13 +69,13 @@ terraform -chdir=environments/dev plan
 
 ### Floating-IP prefix workaround
 
-`Public_Net` currently has an infrastructure issue: addresses in `192.168.121.x` can be allocated but are not reachable, while `192.168.120.x` addresses work. The OpenStack API cannot request an arbitrary *available* address within only part of a subnet. To avoid hardcoding addresses that may already be allocated, use the PowerShell wrapper below after authentication is available in the shell. It applies the configuration, replaces only floating IPs outside the required prefix, and stops after a bounded number of attempts per node.
+`Public_Net` currently has an infrastructure issue: addresses in `192.168.121.x` can be allocated but are not reachable, while `192.168.120.x` addresses work. The OpenStack API cannot request an arbitrary *available* address within only part of a subnet. To avoid hardcoding addresses that may already be allocated, use the Bash wrapper below from WSL after authentication is available in the shell. It applies the configuration, replaces only floating IPs outside the required prefix, and stops after a bounded number of attempts per node.
 
-```powershell
-.\scripts\ensure-floating-ip-prefix.ps1 -DesiredPrefix "192.168.120." -MaxAttemptsPerNode 10
+```bash
+bash scripts/replace-floating-ips.sh --prefix 192.168.120. --max-attempts 10
 ```
 
-Run it from `terraform-openstack`. Use `-SkipInitialApply` when the infrastructure has already been applied and only Floating IPs need correction. This is a temporary operational workaround; the durable fix is an external-network allocation pool or routing correction by the cloud administrator.
+Run it from `terraform-openstack`. The script requires `jq`; install it in WSL with `sudo apt install jq` if necessary. Use `--skip-initial-apply` when the infrastructure has already been applied and only Floating IPs need correction. This is a temporary operational workaround; the durable fix is an external-network allocation pool or routing correction by the cloud administrator.
 
 Review the plan carefully before approving `apply`. To remove resources managed by this configuration:
 
