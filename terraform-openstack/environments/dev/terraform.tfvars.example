@@ -1,5 +1,32 @@
-# Defaults in variables.tf match the current NetChallenge inventory.
-# Override only values that differ in another environment.
+# Copy this file to terraform.tfvars and adjust environment-specific values.
+# Authentication is supplied by OS_* variables from openstack-openrc.sh.
+network_name        = "Public_Net"
+network_id          = "c3455e8f-ea16-4f5d-ad5e-5c4292015a0d"
+security_group_name = "k8s-cluster-sg"
+keypair_name        = "kltn-autoscaling"
+public_key_path     = "~/.ssh/kltn_autoscaling.pub"
+image_id            = "a04bdcd9-40e7-40ba-bd21-7d410965e3a3"
 
-# keypair_name    = "kltn-autoscaling"
-# public_key_path = "~/.ssh/kltn_autoscaling.pub"
+nodes = [
+  {
+    name           = "node-app"
+    role           = "app"
+    flavor_id      = "00-0000-0008-04"
+    flavor_name    = "gp.large-4c"
+    volume_size_gb = 120
+  },
+  {
+    name           = "node-observability"
+    role           = "observability"
+    flavor_id      = "00-0000-0002-01"
+    flavor_name    = "gp.small-1c"
+    volume_size_gb = 50
+  },
+  {
+    name           = "node-loadgen"
+    role           = "loadgen"
+    flavor_id      = "00-0000-0002-01"
+    flavor_name    = "gp.small-1c"
+    volume_size_gb = 30
+  },
+]
