@@ -1,66 +1,64 @@
-# Security group shared by all K8s nodes.
+# Security-group behavior is supplied by the environment inventory.
 resource "openstack_networking_secgroup_v2" "this" {
-  name                 = var.security_group_name
-  description          = "Security group for the non-HA K8s research cluster"
-  delete_default_rules = true
+  name                 = var.security_group.name
+  description          = var.security_group.description
+  delete_default_rules = var.security_group.delete_default_rules
 }
 
-resource "openstack_networking_secgroup_rule_v2" "ssh" {
-  direction = "ingress"
-  ethertype = "IPv4"
-  protocol  = "tcp"
+resource "openstack_networking_secgroup_rule_v2" "this" {
+  for_each = { for rule in var.security_group.rules : rule.name => rule }
 
-  port_range_min    = 22
-  port_range_max    = 22
-  remote_ip_prefix  = "0.0.0.0/0"
+  direction         = each.value.direction
+  ethertype         = each.value.ethertype
+  protocol          = each.value.protocol
+  port_range_min    = each.value.port_range_min
+  port_range_max    = each.value.port_range_max
+  remote_ip_prefix  = each.value.remote_ip_prefix
+  remote_group_id   = each.value.remote_group ? openstack_networking_secgroup_v2.this.id : null
   security_group_id = openstack_networking_secgroup_v2.this.id
 }
 
-resource "openstack_networking_secgroup_rule_v2" "kubernetes_api" {
-  direction = "ingress"
-  ethertype = "IPv4"
-  protocol  = "tcp"
-
-  port_range_min    = 6443
-  port_range_max    = 6443
-  remote_ip_prefix  = "0.0.0.0/0"
-  security_group_id = openstack_networking_secgroup_v2.this.id
+moved {
+  from = openstack_networking_secgroup_rule_v2.ssh
+  to   = openstack_networking_secgroup_rule_v2.this["ssh"]
 }
 
-resource "openstack_networking_secgroup_rule_v2" "nodeport" {
-  direction = "ingress"
-  ethertype = "IPv4"
-  protocol  = "tcp"
-
-  port_range_min    = 30000
-  port_range_max    = 32767
-  remote_ip_prefix  = "0.0.0.0/0"
-  security_group_id = openstack_networking_secgroup_v2.this.id
+moved {
+  from = openstack_networking_secgroup_rule_v2.kubernetes_api
+  to   = openstack_networking_secgroup_rule_v2.this["kubernetes-api"]
 }
 
-# Permit Flannel VXLAN and ICMP only among members of this security group.
-resource "openstack_networking_secgroup_rule_v2" "flannel_vxlan" {
-  direction = "ingress"
-  ethertype = "IPv4"
-  protocol  = "udp"
-
-  port_range_min    = 8472
-  port_range_max    = 8472
-  remote_group_id   = openstack_networking_secgroup_v2.this.id
-  security_group_id = openstack_networking_secgroup_v2.this.id
+moved {
+  from = openstack_networking_secgroup_rule_v2.nodeport
+  to   = openstack_networking_secgroup_rule_v2.this["nodeport"]
 }
 
-resource "openstack_networking_secgroup_rule_v2" "icmp_internal" {
-  direction         = "ingress"
-  ethertype         = "IPv4"
-  protocol          = "icmp"
-  remote_group_id   = openstack_networking_secgroup_v2.this.id
-  security_group_id = openstack_networking_secgroup_v2.this.id
+moved {
+  from = openstack_networking_secgroup_rule_v2.flannel_vxlan
+  to   = openstack_networking_secgroup_rule_v2.this["flannel-vxlan"]
 }
 
-# Explicitly managed IPv4 egress rule.
-resource "openstack_networking_secgroup_rule_v2" "egress_all" {
-  direction         = "egress"
-  ethertype         = "IPv4"
-  security_group_id = openstack_networking_secgroup_v2.this.id
+moved {
+  from = openstack_networking_secgroup_rule_v2.icmp_internal
+  to   = openstack_networking_secgroup_rule_v2.this["icmp-internal"]
+}
+
+moved {
+  from = openstack_networking_secgroup_rule_v2.egress_all
+  to   = openstack_networking_secgroup_rule_v2.this["egress-all"]
+}
+
+moved {
+  from = openstack_networking_secgroup_rule_v2.kubelet_metrics
+  to   = openstack_networking_secgroup_rule_v2.this["kubelet-metrics"]
+}
+
+moved {
+  from = openstack_networking_secgroup_rule_v2.grafana_ui["0.0.0.0/0"]
+  to   = openstack_networking_secgroup_rule_v2.this["grafana-ui"]
+}
+
+moved {
+  from = openstack_networking_secgroup_rule_v2.prometheus_ui["0.0.0.0/0"]
+  to   = openstack_networking_secgroup_rule_v2.this["prometheus-ui"]
 }

@@ -14,7 +14,7 @@ module "networking" {
 module "security_group" {
   source = "../../modules/security-group"
 
-  security_group_name = var.security_group_name
+  security_group = var.security_group
 }
 
 module "keypair" {

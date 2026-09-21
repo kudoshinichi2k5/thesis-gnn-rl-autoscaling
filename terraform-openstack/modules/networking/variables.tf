@@ -31,5 +31,4 @@ variable "router_name" {
 variable "dns_nameservers" {
   description = "DNS resolvers configured through DHCP on the private subnet."
   type        = list(string)
-  default     = ["1.1.1.1", "8.8.8.8"]
 }

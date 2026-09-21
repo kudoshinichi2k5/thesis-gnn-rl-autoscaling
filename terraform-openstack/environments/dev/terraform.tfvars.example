@@ -7,10 +7,25 @@ private_subnet_name   = "k8s-cluster-subnet"
 private_subnet_cidr   = "10.42.0.0/24"
 router_name           = "k8s-cluster-router"
 dns_nameservers       = ["1.1.1.1", "8.8.8.8"]
-security_group_name = "k8s-cluster-sg"
-keypair_name        = "kltn-autoscaling"
-public_key_path     = "~/.ssh/kltn_autoscaling.pub"
-image_id            = "a04bdcd9-40e7-40ba-bd21-7d410965e3a3"
+security_group = {
+  name                 = "k8s-cluster-sg"
+  description          = "Security group for the non-HA K8s research cluster"
+  delete_default_rules = true
+  rules = [
+    { name = "ssh", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 22, port_range_max = 22, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    { name = "kubernetes-api", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 6443, port_range_max = 6443, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    { name = "nodeport", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 30000, port_range_max = 32767, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    { name = "flannel-vxlan", direction = "ingress", ethertype = "IPv4", protocol = "udp", port_range_min = 8472, port_range_max = 8472, remote_group = true },
+    { name = "icmp-internal", direction = "ingress", ethertype = "IPv4", protocol = "icmp", remote_group = true },
+    { name = "egress-all", direction = "egress", ethertype = "IPv4", remote_group = false },
+    { name = "kubelet-metrics", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 10250, port_range_max = 10250, remote_group = true },
+    { name = "grafana-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 3000, port_range_max = 3000, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    { name = "prometheus-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 9090, port_range_max = 9090, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+  ]
+}
+keypair_name    = "kltn-autoscaling"
+public_key_path = "~/.ssh/kltn_autoscaling.pub"
+image_id        = "a04bdcd9-40e7-40ba-bd21-7d410965e3a3"
 
 nodes = [
   {
