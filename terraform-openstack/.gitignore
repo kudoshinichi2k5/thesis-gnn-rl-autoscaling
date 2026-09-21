@@ -4,6 +4,7 @@
 *.tfstate.*
 crash.log
 crash.*.log
+terraform-init-debug.log
 
 # OpenStack credentials
 openstack-openrc.sh
