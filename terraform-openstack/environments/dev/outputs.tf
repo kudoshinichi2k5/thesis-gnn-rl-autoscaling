@@ -1,12 +1,19 @@
 output "node_fixed_ips" {
-  description = "Fixed IPv4 addresses on the external Public_Net; no floating IPs are created."
+  description = "Private fixed IPv4 and externally reachable floating IPv4 addresses for each node."
   value       = module.compute.nodes
 }
 
 output "network" {
-  description = "Existing external network used by the nodes."
+  description = "External and project-private network resources used by the cluster."
   value = {
-    id   = module.networking.network_id
-    name = module.networking.network_name
+    external = {
+      id   = module.networking.external_network_id
+      name = module.networking.external_network_name
+    }
+    private = {
+      id        = module.networking.private_network_id
+      subnet_id = module.networking.private_subnet_id
+    }
+    router_id = module.networking.router_id
   }
 }

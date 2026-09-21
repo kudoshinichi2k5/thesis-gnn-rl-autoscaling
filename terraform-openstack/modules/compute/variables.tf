@@ -10,7 +10,12 @@ variable "nodes" {
 }
 
 variable "network_id" {
-  description = "ID of the existing network to attach to each instance."
+  description = "ID of the project-private network to attach to each instance."
+  type        = string
+}
+
+variable "external_network_name" {
+  description = "Name of the external network from which floating IPs are allocated."
   type        = string
 }
 

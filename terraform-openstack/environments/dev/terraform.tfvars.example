@@ -1,7 +1,12 @@
 # Copy this file to terraform.tfvars and adjust environment-specific values.
 # Authentication is supplied by OS_* variables from openstack-openrc.sh.
-network_name        = "Public_Net"
-network_id          = "c3455e8f-ea16-4f5d-ad5e-5c4292015a0d"
+external_network_name = "Public_Net"
+external_network_id   = "c3455e8f-ea16-4f5d-ad5e-5c4292015a0d"
+private_network_name  = "k8s-cluster-net"
+private_subnet_name   = "k8s-cluster-subnet"
+private_subnet_cidr   = "10.42.0.0/24"
+router_name           = "k8s-cluster-router"
+dns_nameservers       = ["1.1.1.1", "8.8.8.8"]
 security_group_name = "k8s-cluster-sg"
 keypair_name        = "kltn-autoscaling"
 public_key_path     = "~/.ssh/kltn_autoscaling.pub"

@@ -29,3 +29,17 @@ resource "openstack_compute_instance_v2" "node" {
     uuid = var.network_id
   }
 }
+
+resource "openstack_networking_floatingip_v2" "node" {
+  for_each = local.nodes_by_name
+
+  pool = var.external_network_name
+}
+
+resource "openstack_compute_floatingip_associate_v2" "node" {
+  for_each = local.nodes_by_name
+
+  floating_ip = openstack_networking_floatingip_v2.node[each.key].address
+  instance_id = openstack_compute_instance_v2.node[each.key].id
+  fixed_ip    = openstack_compute_instance_v2.node[each.key].network[0].fixed_ip_v4
+}
