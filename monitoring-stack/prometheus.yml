@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 10s
+
+scrape_configs:
+  - job_name: 'kubelet-cadvisor'
+    scheme: https
+    tls_config:
+      insecure_skip_verify: true
+    bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    metrics_path: /metrics/cadvisor
+    static_configs:
+      - targets: ['10.42.0.7:10250']
+
+  - job_name: 'kube-state-metrics'
+    static_configs:
+      - targets: ['kube-state-metrics:8080']

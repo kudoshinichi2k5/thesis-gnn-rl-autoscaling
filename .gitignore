@@ -1,1 +1,3 @@
 cluster-setup/prometheus-remote-token.txt
+monitoring-stack/ksm-kubeconfig
+monitoring-stack/prometheus-remote-token.txt

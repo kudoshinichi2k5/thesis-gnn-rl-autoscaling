@@ -1,0 +1,36 @@
+version: '3.8'
+services:
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana-provisioning:/etc/grafana/provisioning
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+
+  kube-state-metrics:
+    image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+    container_name: kube-state-metrics
+    volumes:
+      - ./ksm-kubeconfig:/kubeconfig
+    command:
+      - '--kubeconfig=/kubeconfig'
+    restart: unless-stopped
