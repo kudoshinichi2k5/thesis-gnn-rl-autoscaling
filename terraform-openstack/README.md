@@ -19,6 +19,19 @@ The environment root is `environments/dev`; reusable resources live in `modules/
 
 The provider is `terraform-provider-openstack/openstack` v3.x. Authentication comes only from the `OS_*` variables exported by the OpenRC file; credentials must not be committed in Terraform files or `terraform.tfvars`.
 
+### Create the SSH keypair
+
+The keypair module imports an existing **public** key into OpenStack. Run this once, as the same Linux user that will run Terraform:
+
+```bash
+mkdir -p ~/.ssh
+ssh-keygen -t ed25519 -f ~/.ssh/kltn_autoscaling -C "kltn-autoscaling"
+chmod 600 ~/.ssh/kltn_autoscaling
+chmod 644 ~/.ssh/kltn_autoscaling.pub
+```
+
+This produces a private key (`~/.ssh/kltn_autoscaling`, keep it secret) and the public key Terraform imports (`~/.ssh/kltn_autoscaling.pub`). Do not commit either file. If you use an existing public key instead, change only `public_key_path` in the ignored `terraform.tfvars` file.
+
 ## Run
 
 Use WSL or another Bash shell so that the OpenRC file can be sourced:
@@ -33,6 +46,8 @@ terraform -chdir=environments/dev validate
 terraform -chdir=environments/dev plan
 terraform -chdir=environments/dev apply
 ```
+
+If you execute Terraform as `root`, `~` resolves to `/root`, so create the key at `/root/.ssh/kltn_autoscaling.pub` or set `public_key_path` to the actual public-key path. Prefer running Terraform as your normal WSL user.
 
 Review the plan carefully before approving `apply`. To remove resources managed by this configuration:
 
