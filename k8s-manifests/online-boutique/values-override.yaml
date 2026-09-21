@@ -2,9 +2,7 @@ frontend:
   type: NodePort
   nodePort: 30080
 
-loadGenerator:
-  replicas: 0
-
+# Cấu hình tài nguyên chung
 adservice:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
 cartservice:
@@ -13,15 +11,34 @@ checkoutservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 currencyservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-emailservice:
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
 frontend:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 paymentservice:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
 productcatalogservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-recommendationservice:
-  resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
 shippingservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
+
+# Cấu hình Đặc biệt cho Python Services: Nới lỏng CPU Limits và Probes
+emailservice:
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
+  livenessProbe:
+    initialDelaySeconds: 60
+    timeoutSeconds: 5
+    periodSeconds: 5
+  readinessProbe:
+    initialDelaySeconds: 60
+    timeoutSeconds: 5
+    periodSeconds: 5
+
+recommendationservice:
+  resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
+  livenessProbe:
+    initialDelaySeconds: 60
+    timeoutSeconds: 5
+    periodSeconds: 5
+  readinessProbe:
+    initialDelaySeconds: 60
+    timeoutSeconds: 5
+    periodSeconds: 5

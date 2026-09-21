@@ -30,4 +30,3 @@ Allocated resources:
   ephemeral-storage  0 (0%)      0 (0%)
   hugepages-1Gi      0 (0%)      0 (0%)
 ```
-*Ghi chú: Traffic tracing từ Envoy sidecar sẽ định tuyến ra ngoài cụm (outbound) thông qua cơ chế NAT của node-app để đến Jaeger (10.42.0.93:9411) trên node-observability, hoàn toàn cô lập khỏi K8s network.*

@@ -1,6 +1,3 @@
-# CHÚ Ý: CHỈ APPLY SAU KHI JAEGER ĐÃ CHẠY Ở TUẦN 3
-# Traffic từ Envoy sidecar sẽ đi ra ngoài qua NAT của k3s host (node-app) 
-# tới trực tiếp IP vật lý của node-observability.
 apiVersion: install.istio.io/v1alpha1
 kind: IstioOperator
 metadata:
