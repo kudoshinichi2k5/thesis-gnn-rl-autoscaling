@@ -30,7 +30,7 @@ module "compute" {
   nodes                 = var.nodes
   network_id            = module.networking.private_network_id
   external_network_name = module.networking.external_network_name
-  security_group_name   = module.security_group.security_group_name
+  security_group_id     = module.security_group.security_group_id
   keypair_name          = module.keypair.name
   image_id              = var.image_id
 

@@ -2,6 +2,17 @@ locals {
   nodes_by_name = { for node in var.nodes : node.name => node }
 }
 
+# Each node receives a managed Neutron port on the private network. Managing the
+# port explicitly makes it safe to associate its floating IP through Neutron.
+resource "openstack_networking_port_v2" "node" {
+  for_each = local.nodes_by_name
+
+  name               = "${each.value.name}-port"
+  network_id         = var.network_id
+  admin_state_up     = true
+  security_group_ids = [var.security_group_id]
+}
+
 # Each instance boots from a new Cinder volume cloned from the supplied image.
 resource "openstack_compute_instance_v2" "node" {
   for_each = local.nodes_by_name
@@ -9,8 +20,6 @@ resource "openstack_compute_instance_v2" "node" {
   name            = each.value.name
   flavor_id       = each.value.flavor_id
   key_pair        = var.keypair_name
-  security_groups = [var.security_group_name]
-
   metadata = {
     role        = each.value.role
     flavor_name = each.value.flavor_name
@@ -26,7 +35,7 @@ resource "openstack_compute_instance_v2" "node" {
   }
 
   network {
-    uuid = var.network_id
+    port = openstack_networking_port_v2.node[each.key].id
   }
 }
 
@@ -36,10 +45,9 @@ resource "openstack_networking_floatingip_v2" "node" {
   pool = var.external_network_name
 }
 
-resource "openstack_compute_floatingip_associate_v2" "node" {
+resource "openstack_networking_floatingip_associate_v2" "node" {
   for_each = local.nodes_by_name
 
   floating_ip = openstack_networking_floatingip_v2.node[each.key].address
-  instance_id = openstack_compute_instance_v2.node[each.key].id
-  fixed_ip    = openstack_compute_instance_v2.node[each.key].network[0].fixed_ip_v4
+  port_id     = openstack_networking_port_v2.node[each.key].id
 }

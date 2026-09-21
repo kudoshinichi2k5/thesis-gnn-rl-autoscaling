@@ -19,8 +19,8 @@ variable "external_network_name" {
   type        = string
 }
 
-variable "security_group_name" {
-  description = "Security group name attached to each instance."
+variable "security_group_id" {
+  description = "Neutron security group ID attached to each node port."
   type        = string
 }
 
