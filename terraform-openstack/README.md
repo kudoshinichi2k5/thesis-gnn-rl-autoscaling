@@ -35,6 +35,8 @@ This produces a private key (`~/.ssh/kltn_autoscaling`, keep it secret) and the 
 
 ## Run
 
+### WSL or Bash
+
 Use WSL or another Bash shell so that the OpenRC file can be sourced:
 
 ```bash
@@ -49,6 +51,21 @@ terraform -chdir=environments/dev apply
 ```
 
 If you execute Terraform as `root`, `~` resolves to `/root`, so create the key at `/root/.ssh/kltn_autoscaling.pub` or set `public_key_path` to the actual public-key path. Prefer running Terraform as your normal WSL user.
+
+### Windows PowerShell
+
+PowerShell cannot source `openstack-openrc.sh`. Export the same `OS_*` values from that file into the current PowerShell session (or configure `OS_CLOUD` and a local `clouds.yaml`) before Terraform commands. Do not put credentials in `terraform.tfvars` or commit them.
+
+The key path must exist in the operating system running Terraform. For PowerShell, create a Windows keypair if needed and set the ignored `terraform.tfvars` value to its Windows path:
+
+```powershell
+ssh-keygen -t ed25519 -f "$env:USERPROFILE\.ssh\kltn_autoscaling" -C "kltn-autoscaling"
+# In terraform.tfvars:
+# public_key_path = "C:/Users/<your-Windows-user>/.ssh/kltn_autoscaling.pub"
+terraform -chdir=environments/dev init
+terraform -chdir=environments/dev validate
+terraform -chdir=environments/dev plan
+```
 
 Review the plan carefully before approving `apply`. To remove resources managed by this configuration:
 
@@ -66,6 +83,6 @@ The private subnet CIDR must not overlap with another network that the project c
 
 ## Module conventions
 
-`environments/dev` owns the only `provider "openstack" {}` block. Child modules declare only `required_providers` and inherit the default root provider configuration; no module stores authentication settings. For a future multi-region deployment, define aliased provider configurations in the environment root and pass them to a module with its `providers` map.
+`environments/dev` owns the only `provider "openstack" {}` block. Child modules (`networking`, `security-group`, `keypair`, `compute`, and `floating-ip`) declare only `required_providers` and inherit the default root provider configuration; no module stores authentication settings. For a future multi-region deployment, define aliased provider configurations in the environment root and pass them to a module with its `providers` map.
 
 Provider syntax and resource arguments follow the [OpenStack provider documentation](https://registry.terraform.io/providers/terraform-provider-openstack/openstack/latest/docs), including boot-from-volume, public-key import, Neutron router/floating-IP resources, and security-group rules.

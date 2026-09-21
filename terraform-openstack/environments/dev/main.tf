@@ -27,12 +27,20 @@ module "keypair" {
 module "compute" {
   source = "../../modules/compute"
 
-  nodes                 = var.nodes
-  network_id            = module.networking.private_network_id
-  external_network_name = module.networking.external_network_name
-  security_group_id     = module.security_group.security_group_id
-  keypair_name          = module.keypair.name
-  image_id              = var.image_id
+  nodes             = var.nodes
+  network_id        = module.networking.private_network_id
+  security_group_id = module.security_group.security_group_id
+  keypair_name      = module.keypair.name
+  image_id          = var.image_id
 
   depends_on = [module.networking]
+}
+
+module "floating_ip" {
+  source = "../../modules/floating-ip"
+
+  external_network_name = module.networking.external_network_name
+  node_ports            = module.compute.node_ports
+
+  depends_on = [module.compute]
 }

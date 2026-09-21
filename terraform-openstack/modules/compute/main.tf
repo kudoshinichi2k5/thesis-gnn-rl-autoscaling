@@ -38,16 +38,3 @@ resource "openstack_compute_instance_v2" "node" {
     port = openstack_networking_port_v2.node[each.key].id
   }
 }
-
-resource "openstack_networking_floatingip_v2" "node" {
-  for_each = local.nodes_by_name
-
-  pool = var.external_network_name
-}
-
-resource "openstack_networking_floatingip_associate_v2" "node" {
-  for_each = local.nodes_by_name
-
-  floating_ip = openstack_networking_floatingip_v2.node[each.key].address
-  port_id     = openstack_networking_port_v2.node[each.key].id
-}

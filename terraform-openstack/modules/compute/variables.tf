@@ -14,11 +14,6 @@ variable "network_id" {
   type        = string
 }
 
-variable "external_network_name" {
-  description = "Name of the external network from which floating IPs are allocated."
-  type        = string
-}
-
 variable "security_group_id" {
   description = "Neutron security group ID attached to each node port."
   type        = string
