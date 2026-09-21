@@ -1,0 +1,26 @@
+# CHÚ Ý: CHỈ APPLY SAU KHI JAEGER ĐÃ CHẠY Ở TUẦN 3
+# Traffic từ Envoy sidecar sẽ đi ra ngoài qua NAT của k3s host (node-app) 
+# tới trực tiếp IP vật lý của node-observability.
+apiVersion: install.istio.io/v1alpha1
+kind: IstioOperator
+metadata:
+  namespace: istio-system
+  name: tracing-config
+spec:
+  meshConfig:
+    extensionProviders:
+    - name: external-jaeger
+      zipkin:
+        service: "10.42.0.93"
+        port: 9411
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: mesh-default
+  namespace: istio-system
+spec:
+  tracing:
+  - providers:
+    - name: external-jaeger
+    randomSamplingPercentage: 100.0

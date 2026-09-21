@@ -19,3 +19,7 @@ Do giới hạn về cấp phát tài nguyên trên OpenStack, hệ thống đư
                                             +-- Pod/App Metrics (Scrape) ----> Prometheus
                                             |
                                         Kubelet (10250) <--- (Scrape) -------- Prometheus
+### Baseline Tài nguyên (Sau khi cài K3s + Istio)
+```text
+```
+*Ghi chú: Traffic tracing từ Envoy sidecar sẽ định tuyến ra ngoài cụm (outbound) thông qua cơ chế NAT của node-app để đến Jaeger (10.42.0.93:9411) trên node-observability, hoàn toàn cô lập khỏi K8s network.*
