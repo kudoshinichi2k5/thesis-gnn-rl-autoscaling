@@ -7,7 +7,7 @@ The environment root is `environments/dev`; reusable resources live in `modules/
 
 - Looks up the existing external `Public_Net` for router egress and floating-IP allocation.
 - Creates a project-private network, IPv4 subnet, and router. Nodes attach only to the private network.
-- Creates `k8s-cluster-sg` with SSH, Kubernetes API, NodePort, self-referencing Flannel VXLAN/ICMP, and managed IPv4 egress rules.
+- Creates `k8s-cluster-sg` with SSH, Kubernetes API, NodePort, self-referencing Flannel VXLAN/ICMP, and managed IPv4 egress rules. Each node receives an explicitly managed Neutron port with this group.
 - Imports `~/.ssh/kltn_autoscaling.pub` as an OpenStack keypair.
 - Creates `node-app`, `node-observability`, and `node-loadgen`, each booting from a new Cinder volume based on Ubuntu 22.04.
 - Allocates and associates one floating IP per node, then outputs both each node's private fixed IPv4 and public floating IPv4 address.
