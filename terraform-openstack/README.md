@@ -5,11 +5,12 @@ The environment root is `environments/dev`; reusable resources live in `modules/
 
 ## What it creates
 
-- Looks up the existing external `Public_Net`; it never creates a network, subnet, or router.
+- Looks up the existing external `Public_Net` for router egress and floating-IP allocation.
+- Creates a project-private network, IPv4 subnet, and router. Nodes attach only to the private network.
 - Creates `k8s-cluster-sg` with SSH, Kubernetes API, NodePort, self-referencing Flannel VXLAN/ICMP, and managed IPv4 egress rules.
 - Imports `~/.ssh/kltn_autoscaling.pub` as an OpenStack keypair.
 - Creates `node-app`, `node-observability`, and `node-loadgen`, each booting from a new Cinder volume based on Ubuntu 22.04.
-- Outputs the fixed IPv4 address of each node. `Public_Net` is external, so this configuration does not allocate floating IPs.
+- Allocates and associates one floating IP per node, then outputs both each node's private fixed IPv4 and public floating IPv4 address.
 
 ## Prerequisites
 
@@ -57,7 +58,9 @@ terraform -chdir=environments/dev destroy
 
 ## Configuration
 
-`environments/dev/variables.tf` declares only input names, types, and descriptions. The full environment inventory is in `terraform.tfvars`: network, image, keypair, flavor IDs/names, volume sizes, and nodes. Copy `terraform.tfvars.example` to `terraform.tfvars` for a new environment and edit its values. Do not commit `terraform.tfvars`.
+`environments/dev/variables.tf` declares only input names, types, and descriptions. The full environment inventory is in `terraform.tfvars`: external-network identity, private-network/subnet/router names and CIDR, image, keypair, flavor IDs/names, volume sizes, and nodes. Copy `terraform.tfvars.example` to `terraform.tfvars` for a new environment and edit its values. Do not commit `terraform.tfvars`.
+
+The private subnet CIDR must not overlap with another network that the project can route to. `10.42.0.0/24` is a placeholder: confirm it is unused before applying. The external network must be visible to the project and permit router gateway and floating-IP allocation; these are OpenStack policy requirements that Terraform cannot bypass.
 
 `terraform init` creates `environments/dev/.terraform.lock.hcl`. Commit that lock file so every user receives the same tested provider version.
 
@@ -65,4 +68,4 @@ terraform -chdir=environments/dev destroy
 
 `environments/dev` owns the only `provider "openstack" {}` block. Child modules declare only `required_providers` and inherit the default root provider configuration; no module stores authentication settings. For a future multi-region deployment, define aliased provider configurations in the environment root and pass them to a module with its `providers` map.
 
-Provider syntax and resource arguments follow the [OpenStack provider documentation](https://registry.terraform.io/providers/terraform-provider-openstack/openstack/latest/docs), including the documented boot-from-volume block, public-key import, and Neutron security-group rules.
+Provider syntax and resource arguments follow the [OpenStack provider documentation](https://registry.terraform.io/providers/terraform-provider-openstack/openstack/latest/docs), including boot-from-volume, public-key import, Neutron router/floating-IP resources, and security-group rules.
