@@ -57,7 +57,7 @@ terraform -chdir=environments/dev destroy
 
 ## Configuration
 
-Current inventory defaults are in `environments/dev/variables.tf`. Copy `terraform.tfvars.example` to `terraform.tfvars` and override node flavor IDs, flavor names, volume sizes, image ID, or SSH key path when needed. Do not commit `terraform.tfvars`.
+`environments/dev/variables.tf` declares only input names, types, and descriptions. The full environment inventory is in `terraform.tfvars`: network, image, keypair, flavor IDs/names, volume sizes, and nodes. Copy `terraform.tfvars.example` to `terraform.tfvars` for a new environment and edit its values. Do not commit `terraform.tfvars`.
 
 `terraform init` creates `environments/dev/.terraform.lock.hcl`. Commit that lock file so every user receives the same tested provider version.
 
