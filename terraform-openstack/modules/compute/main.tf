@@ -1,33 +1,30 @@
 locals {
-  nodes = {
-    for node in var.nodes :
-    node.name => node
-  }
+  nodes_by_name = { for node in var.nodes : node.name => node }
 }
 
+# Each instance boots from a new Cinder volume cloned from the supplied image.
 resource "openstack_compute_instance_v2" "node" {
-  for_each = local.nodes
+  for_each = local.nodes_by_name
 
   name            = each.value.name
-  flavor_name     = each.value.flavor
-  key_pair        = var.key_pair
+  flavor_id       = each.value.flavor_id
+  key_pair        = var.keypair_name
   security_groups = [var.security_group_name]
 
   metadata = {
-    role = each.value.role
+    role        = each.value.role
+    flavor_name = each.value.flavor_name
   }
 
-  # Flavor disk=0, so boot from a dedicated Cinder volume.
   block_device {
     uuid                  = var.image_id
     source_type           = "image"
     destination_type      = "volume"
-    volume_size           = each.value.disk_size_gb
+    volume_size           = each.value.volume_size_gb
     boot_index            = 0
     delete_on_termination = true
   }
 
-  # Attach the instance directly to the existing Public_Net.
   network {
     uuid = var.network_id
   }

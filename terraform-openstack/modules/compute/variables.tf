@@ -1,35 +1,30 @@
 variable "nodes" {
-  description = "K3s cluster nodes."
+  description = "Nodes and their flavor/boot-volume specifications."
   type = list(object({
-    name         = string
-    flavor       = string
-    disk_size_gb = number
-    role         = string
+    name           = string
+    role           = string
+    flavor_id      = string
+    flavor_name    = string
+    volume_size_gb = number
   }))
 }
 
 variable "network_id" {
-  description = "Existing OpenStack network ID."
+  description = "ID of the existing network to attach to each instance."
   type        = string
 }
 
 variable "security_group_name" {
-  description = "Security group attached to the nodes."
+  description = "Security group name attached to each instance."
   type        = string
 }
 
-variable "key_pair" {
-  description = "Existing OpenStack keypair."
+variable "keypair_name" {
+  description = "Existing OpenStack keypair name attached to each instance."
   type        = string
 }
 
 variable "image_id" {
-  description = "Ubuntu 22.04 image ID."
+  description = "Glance image ID used to create each boot volume."
   type        = string
-}
-
-variable "assign_floating_ip" {
-  description = "Whether to assign floating IPs."
-  type        = bool
-  default     = false
 }
