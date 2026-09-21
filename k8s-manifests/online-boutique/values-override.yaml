@@ -2,13 +2,9 @@ frontend:
   type: NodePort
   nodePort: 30080
 
-# Kỹ thuật vô hiệu hóa loadgenerator bằng cách ép replicas về 0 
-# (Tránh phải xóa Deployment thủ công và giữ vẹn toàn Helm release)
 loadGenerator:
   replicas: 0
 
-# Tối ưu hóa tài nguyên cho từng nhóm ngôn ngữ lập trình
-# Java (Ad, Payment), C# (Cart) ăn RAM nhiều hơn. Go/C++ ăn CPU nhiều hơn khi spike.
 adservice:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
 cartservice:
@@ -18,7 +14,7 @@ checkoutservice:
 currencyservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 emailservice:
-  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 300m, memory: 256Mi } }
+  resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
 frontend:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 paymentservice:
@@ -26,6 +22,6 @@ paymentservice:
 productcatalogservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 recommendationservice:
-  resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
+  resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
 shippingservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
