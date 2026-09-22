@@ -7,7 +7,7 @@ The environment root is `environments/dev`; reusable resources live in `modules/
 
 - Looks up the existing external `Public_Net` for router egress and floating-IP allocation.
 - Creates a project-private network, IPv4 subnet, and router. Nodes attach only to the private network.
-- Creates `k8s-cluster-sg` with SSH, Kubernetes API, NodePort, self-referencing Flannel VXLAN/ICMP, Kubelet metrics, Grafana, Prometheus, and managed IPv4 egress rules. Each node receives an explicitly managed Neutron port with this group.
+- Creates `k8s-cluster-sg` with SSH, Kubernetes API, NodePort, self-referencing Flannel VXLAN/ICMP, Kubelet metrics, Grafana, Prometheus, Jaeger Collector, Jaeger UI, and managed IPv4 egress rules. Each node receives an explicitly managed Neutron port with this group.
 - Imports `~/.ssh/kltn_autoscaling.pub` as an OpenStack keypair.
 - Creates `node-app`, `node-observability`, and `node-loadgen`, each booting from a new Cinder volume based on Ubuntu 22.04.
 - Allocates and associates one floating IP per node, then outputs both each node's private fixed IPv4 and public floating IPv4 address.
@@ -89,7 +89,27 @@ terraform -chdir=environments/dev destroy
 
 The private subnet CIDR must not overlap with another network that the project can route to. `10.42.0.0/24` is a placeholder: confirm it is unused before applying. The external network must be visible to the project and permit router gateway and floating-IP allocation; these are OpenStack policy requirements that Terraform cannot bypass.
 
-Security-group rules are defined in `environments/dev/terraform.tfvars` under `security_group.rules`. Replace the Grafana and Prometheus `remote_ip_prefix` values (`0.0.0.0/0`) with your administrator public IP as a `/32` whenever possible. Kubelet metrics (TCP/10250) are permitted between members of `k8s-cluster-sg`; this shared group cannot express a role-specific rule for only the observability node.
+Security-group rules are defined in `environments/dev/terraform.tfvars` under `security_group.rules`. Replace the Grafana, Prometheus, and Jaeger UI `remote_ip_prefix` values (`0.0.0.0/0`) with your administrator public IP as a `/32` whenever possible. Kubelet metrics (TCP/10250) and Jaeger Collector (TCP/9411) are permitted between members of `k8s-cluster-sg`; this shared group cannot express a role-specific rule for only the observability node.
+
+### Security-group state migration
+
+The security-group module declares only the current generic `for_each` resource. If an existing state was created with the previous individually named rules, migrate those state addresses once before running `plan`:
+
+```bash
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.ssh' 'module.security_group.openstack_networking_secgroup_rule_v2.this["ssh"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.kubernetes_api' 'module.security_group.openstack_networking_secgroup_rule_v2.this["kubernetes-api"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.nodeport' 'module.security_group.openstack_networking_secgroup_rule_v2.this["nodeport"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.flannel_vxlan' 'module.security_group.openstack_networking_secgroup_rule_v2.this["flannel-vxlan"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.icmp_internal' 'module.security_group.openstack_networking_secgroup_rule_v2.this["icmp-internal"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.egress_all' 'module.security_group.openstack_networking_secgroup_rule_v2.this["egress-all"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.kubelet_metrics' 'module.security_group.openstack_networking_secgroup_rule_v2.this["kubelet-metrics"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.grafana_ui["0.0.0.0/0"]' 'module.security_group.openstack_networking_secgroup_rule_v2.this["grafana-ui"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.prometheus_ui["0.0.0.0/0"]' 'module.security_group.openstack_networking_secgroup_rule_v2.this["prometheus-ui"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.jaeger_collector' 'module.security_group.openstack_networking_secgroup_rule_v2.this["jaeger-collector"]'
+terraform -chdir=environments/dev state mv 'module.security_group.openstack_networking_secgroup_rule_v2.jaeger_ui' 'module.security_group.openstack_networking_secgroup_rule_v2.this["jaeger-ui"]'
+```
+
+Run only the commands for addresses present in `terraform state list`; a new environment does not need this migration.
 
 `terraform init` creates `environments/dev/.terraform.lock.hcl`. Commit that lock file so every user receives the same tested provider version.
 
