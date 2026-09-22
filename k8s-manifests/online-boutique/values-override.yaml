@@ -1,6 +1,7 @@
 frontend:
-  type: NodePort
-  nodePort: 30080
+  # type: NodePort
+  # nodePort: 30080
+  resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
 # Cấu hình tài nguyên chung
 adservice:
@@ -10,8 +11,6 @@ cartservice:
 checkoutservice:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 currencyservice:
-  resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-frontend:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 paymentservice:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }

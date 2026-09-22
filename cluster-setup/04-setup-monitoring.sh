@@ -154,9 +154,25 @@ services:
       - '--kubeconfig=/kubeconfig'
     restart: unless-stopped
 
+  jaeger-data-init:
+    image: busybox:1.36
+    container_name: jaeger-data-init
+    # Fix bug đã biết từ Jaeger >=1.50.0: image chạy bằng non-root UID
+    # 10001, nhưng Docker tạo named volume lần đầu với owner root:root ->
+    # Jaeger không ghi được vào /badger ("mkdir /badger/key: permission
+    # denied"). Chown 1 lần trước khi jaeger khởi động, chạy lại mỗi lần
+    # `docker compose up` nên không phụ thuộc lần chạy đầu tiên.
+    # https://github.com/orgs/jaegertracing/discussions/5097
+    command: ["sh", "-c", "chown -R 10001:10001 /badger"]
+    volumes:
+      - jaeger_data:/badger
+
   jaeger:
     image: jaegertracing/all-in-one:1.60.0
     container_name: jaeger
+    depends_on:
+      jaeger-data-init:
+        condition: service_completed_successfully
     ports:
       - "16686:16686" # UI
       - "9411:9411"   # Zipkin Collector (cho Envoy)
@@ -166,11 +182,6 @@ services:
       - BADGER_DIRECTORY_VALUE=/badger/data
       - BADGER_DIRECTORY_KEY=/badger/key
     volumes:
-      # Named volume thay vì bind-mount: Docker cấp quyền ghi phù hợp cho
-      # user non-root bên trong image jaeger ngay từ đầu. Bind-mount
-      # (./jaeger-data:/badger) khiến Docker tạo thư mục host với owner
-      # root, gây "mkdir /badger/key: permission denied" khi container
-      # cố ghi vào đó bằng UID không phải root.
       - jaeger_data:/badger
     restart: unless-stopped
 
@@ -200,16 +211,3 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$OBS_IP" << 'REMOTE_EOF
   if ! command -v docker &> /dev/null; then
     sudo apt-get update && sudo apt-get install -y ca-certificates curl
     sudo install -m 0755 -d /etc/apt/keyrings
-    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-    sudo chmod a+r /etc/apt/keyrings/docker.asc
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    sudo usermod -aG docker "$USER"
-  fi
-
-  cd ~/monitoring-stack
-  sudo docker compose down
-  sudo docker compose up -d
-REMOTE_EOF
-
-echo "✅ HOÀN TẤT!"

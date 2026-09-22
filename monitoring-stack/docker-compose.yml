@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -6,8 +5,9 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token:ro
+      - prom_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -19,7 +19,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./grafana-provisioning:/etc/grafana/provisioning
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     restart: unless-stopped
@@ -30,7 +31,32 @@ services:
     image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
     container_name: kube-state-metrics
     volumes:
-      - ./ksm-kubeconfig:/kubeconfig
+      - ./ksm-kubeconfig:/kubeconfig:ro
     command:
       - '--kubeconfig=/kubeconfig'
     restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60.0
+    container_name: jaeger
+    ports:
+      - "16686:16686" # UI
+      - "9411:9411"   # Zipkin Collector (cho Envoy)
+    environment:
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    volumes:
+      # Named volume thay vì bind-mount: Docker cấp quyền ghi phù hợp cho
+      # user non-root bên trong image jaeger ngay từ đầu. Bind-mount
+      # (./jaeger-data:/badger) khiến Docker tạo thư mục host với owner
+      # root, gây "mkdir /badger/key: permission denied" khi container
+      # cố ghi vào đó bằng UID không phải root.
+      - jaeger_data:/badger
+    restart: unless-stopped
+
+volumes:
+  prom_data:
+  grafana_data:
+  jaeger_data:

@@ -26,7 +26,12 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" << 'REMOTE_EO
   if command -v k3s >/dev/null 2>&1; then
     echo "K3s đã được cài đặt, bỏ qua bước cài mới."
   else
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.9+k3s1 INSTALL_K3S_EXEC="server --disable traefik --disable servicelb --tls-san 192.168.120.175 --node-external-ip 192.168.120.175 --cluster-cidr 10.244.0.0/16 --service-cidr 10.96.0.0/16" sh -
+    # Không disable servicelb: Online Boutique Helm chart hardcode
+    # frontend-external là type LoadBalancer, không có key override sang
+    # NodePort trong values.yaml. Trên bare-metal K3s (không cloud
+    # provider), servicelb (Klipper) là cơ chế duy nhất gán EXTERNAL-IP
+    # cho service LoadBalancer — thiếu nó service sẽ đứng <pending> mãi.
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.9+k3s1 INSTALL_K3S_EXEC="server --disable traefik --tls-san 192.168.120.175 --node-external-ip 192.168.120.175 --cluster-cidr 10.244.0.0/16 --service-cidr 10.96.0.0/16" sh -
   fi
 
   echo "Đợi K3s API sẵn sàng..."
