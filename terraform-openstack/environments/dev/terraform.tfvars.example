@@ -14,14 +14,17 @@ security_group = {
   rules = [
     { name = "ssh", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 22, port_range_max = 22, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "kubernetes-api", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 6443, port_range_max = 6443, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    # Public ingress for the Online Boutique frontend exposed through K3s NodePort.
     { name = "nodeport", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 30000, port_range_max = 32767, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "flannel-vxlan", direction = "ingress", ethertype = "IPv4", protocol = "udp", port_range_min = 8472, port_range_max = 8472, remote_group = true },
     { name = "icmp-internal", direction = "ingress", ethertype = "IPv4", protocol = "icmp", remote_group = true },
+    # Explicit IPv4 egress allows response traffic and outbound node communication.
     { name = "egress-all", direction = "egress", ethertype = "IPv4", remote_group = false },
     { name = "kubelet-metrics", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 10250, port_range_max = 10250, remote_group = true },
     { name = "grafana-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 3000, port_range_max = 3000, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "prometheus-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 9090, port_range_max = 9090, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "jaeger-collector", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 9411, port_range_max = 9411, remote_group = true },
+    # Public UI access; restrict this prefix to an administrator CIDR outside development.
     { name = "jaeger-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 16686, port_range_max = 16686, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
   ]
 }
