@@ -17,8 +17,13 @@ rm -f "$OB_DIR/chart/templates/loadgenerator.yaml"
 echo "[3/4] Cấu hình values-override.yaml..."
 cat << 'YAML_EOF' > "$OB_DIR/values-override.yaml"
 frontend:
-  type: NodePort
-  nodePort: 30080
+  # Chart chính thức của Online Boutique KHÔNG có key frontend.type/nodePort
+  # — Helm âm thầm bỏ qua nếu khai báo (đã xác minh trực tiếp trong
+  # templates/frontend.yaml). frontend luôn là ClusterIP (hardcode); expose
+  # ra ngoài do service riêng "frontend-external", type LoadBalancer, cũng
+  # hardcode, bật/tắt bằng frontend.externalService (mặc định true).
+  # Cần K3s servicelb bật (xem 01-install-server.sh) để LoadBalancer nhận
+  # được EXTERNAL-IP trên bare-metal.
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
 # Cấu hình tài nguyên chung
@@ -72,7 +77,7 @@ cat << MD_EOF > "$OB_DIR/README.md"
 # Online Boutique - Microservices Benchmark
 - **Vendor từ:** \`GoogleCloudPlatform/microservices-demo\`
 - **Commit hash:** \`${CURRENT_HASH}\`
-- **Thay đổi chính:** Cố định NodePort (30080), xóa LoadGenerator, cấu hình Limits nới lỏng cho Python services, ghi đè Probes timeout (60s delay, 5s timeout) trực tiếp qua values.
+- **Thay đổi chính:** Xóa LoadGenerator, cấu hình Limits nới lỏng cho Python services, ghi đè Probes timeout (60s delay, 5s timeout) trực tiếp qua values. Frontend expose qua service \`frontend-external\` (LoadBalancer, do K3s servicelb cấp EXTERNAL-IP) — chart không hỗ trợ NodePort qua values.
 MD_EOF
 
 rm -rf /tmp/microservices-demo
