@@ -1,15 +1,15 @@
 #!/bin/bash
-# Script cài đặt Standalone Observability (Prometheus, Grafana, KSM)
+# Script cài đặt Standalone Observability (Prometheus, Grafana, KSM, Jaeger)
+set -euo pipefail
 
 OBS_IP="192.168.120.80"
 NODE_APP_PRIVATE_IP="10.42.0.7"
-SSH_KEY="~/.ssh/kltn_autoscaling"
+SSH_KEY="$HOME/.ssh/kltn_autoscaling"
 SSH_USER="ubuntu"
-KUBECONFIG_PATH="~/.kube/config"
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 echo "[1/4] Tạo RBAC và Kubeconfig (Read-Only) cho kube-state-metrics..."
-export KUBECONFIG=$KUBECONFIG_PATH
-cat << 'RBAC_EOF' | kubectl apply -f -
+kubectl apply -f - << 'RBAC_EOF'
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -50,8 +50,18 @@ RBAC_EOF
 
 mkdir -p monitoring-stack
 
-# Lấy token và tạo kubeconfig cho KSM (Giao tiếp qua mạng nội bộ 10.42.0.7)
-KSM_TOKEN=$(kubectl get secret ksm-reader-token -n kube-system -o jsonpath='{.data.token}' | base64 -d)
+echo "Đợi token của ksm-reader được cấp phát..."
+KSM_TOKEN=""
+for i in $(seq 1 15); do
+  KSM_TOKEN=$(kubectl get secret ksm-reader-token -n kube-system -o jsonpath='{.data.token}' 2>/dev/null | base64 -d || true)
+  [ -n "$KSM_TOKEN" ] && break
+  sleep 2
+done
+if [ -z "$KSM_TOKEN" ]; then
+  echo "❌ Không lấy được token cho ksm-reader, kiểm tra lại kết nối tới cluster." >&2
+  exit 1
+fi
+
 cat << KCONF_EOF > monitoring-stack/ksm-kubeconfig
 apiVersion: v1
 kind: Config
@@ -71,16 +81,22 @@ contexts:
     user: ksm-reader
 current-context: default
 KCONF_EOF
+chmod 600 monitoring-stack/ksm-kubeconfig
 
-# Sao chép Token của Prometheus cAdvisor (đã tạo ở script 01)
+if [ ! -f cluster-setup/prometheus-remote-token.txt ]; then
+  echo "❌ Không tìm thấy cluster-setup/prometheus-remote-token.txt. Hãy chạy 01-install-server.sh trước." >&2
+  exit 1
+fi
 cp cluster-setup/prometheus-remote-token.txt monitoring-stack/prometheus-remote-token.txt
+chmod 600 monitoring-stack/prometheus-remote-token.txt
 
-# Cập nhật .gitignore để bảo vệ credentials
-grep -qxF "monitoring-stack/ksm-kubeconfig" .gitignore || echo "monitoring-stack/ksm-kubeconfig" >> .gitignore
-grep -qxF "monitoring-stack/prometheus-remote-token.txt" .gitignore || echo "monitoring-stack/prometheus-remote-token.txt" >> .gitignore
+touch .gitignore
+for entry in "monitoring-stack/ksm-kubeconfig" "monitoring-stack/prometheus-remote-token.txt"; do
+  grep -qxF "$entry" .gitignore || echo "$entry" >> .gitignore
+done
 
-echo "[2/4] Tạo cấu hình Prometheus & Docker Compose..."
-cat << 'PROM_EOF' > monitoring-stack/prometheus.yml
+echo "[2/4] Tạo cấu hình Monitoring Stack (Prometheus, Grafana, KSM, Jaeger)..."
+cat << PROM_EOF > monitoring-stack/prometheus.yml
 global:
   scrape_interval: 10s
 
@@ -92,7 +108,7 @@ scrape_configs:
     bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
     metrics_path: /metrics/cadvisor
     static_configs:
-      - targets: ['10.42.0.7:10250']
+      - targets: ['${NODE_APP_PRIVATE_IP}:10250']
 
   - job_name: 'kube-state-metrics'
     static_configs:
@@ -100,7 +116,6 @@ scrape_configs:
 PROM_EOF
 
 cat << 'COMPOSE_EOF' > monitoring-stack/docker-compose.yml
-version: '3.8'
 services:
   prometheus:
     image: prom/prometheus:v2.54.1
@@ -108,8 +123,9 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml
-      - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token:ro
+      - prom_data:/prometheus
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -121,7 +137,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./grafana-provisioning:/etc/grafana/provisioning
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
     restart: unless-stopped
@@ -132,13 +149,37 @@ services:
     image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
     container_name: kube-state-metrics
     volumes:
-      - ./ksm-kubeconfig:/kubeconfig
+      - ./ksm-kubeconfig:/kubeconfig:ro
     command:
       - '--kubeconfig=/kubeconfig'
     restart: unless-stopped
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60.0
+    container_name: jaeger
+    ports:
+      - "16686:16686" # UI
+      - "9411:9411"   # Zipkin Collector (cho Envoy)
+    environment:
+      - SPAN_STORAGE_TYPE=badger
+      - BADGER_EPHEMERAL=false
+      - BADGER_DIRECTORY_VALUE=/badger/data
+      - BADGER_DIRECTORY_KEY=/badger/key
+    volumes:
+      # Named volume thay vì bind-mount: Docker cấp quyền ghi phù hợp cho
+      # user non-root bên trong image jaeger ngay từ đầu. Bind-mount
+      # (./jaeger-data:/badger) khiến Docker tạo thư mục host với owner
+      # root, gây "mkdir /badger/key: permission denied" khi container
+      # cố ghi vào đó bằng UID không phải root.
+      - jaeger_data:/badger
+    restart: unless-stopped
+
+volumes:
+  prom_data:
+  grafana_data:
+  jaeger_data:
 COMPOSE_EOF
 
-# Auto-provisioning Grafana Datasource
 mkdir -p monitoring-stack/grafana-provisioning/datasources
 cat << 'DS_EOF' > monitoring-stack/grafana-provisioning/datasources/prometheus.yml
 apiVersion: 1
@@ -150,51 +191,25 @@ datasources:
     isDefault: true
 DS_EOF
 
-cat << 'MD_EOF' > monitoring-stack/README.md
-# Giám sát Ngoại vi (Standalone Observability)
-Hệ thống giám sát được cài đặt độc lập để không tranh chấp CPU/RAM với `node-app`.
-
-## Cấu trúc Thành phần (Phiên bản Stable)
-- **Prometheus (v2.54.1):** Thu thập metrics từ cAdvisor (`node-app:10250`) và kube-state-metrics.
-- **Grafana (11.2.0):** Dashboard UI (Port 3000, Pass: admin/admin).
-- **Kube-state-metrics (v2.13.0):** Đồng bộ trạng thái Cluster/Deployments qua Kubeconfig (Read-only).
-
-## LƯU Ý QUAN TRỌNG VỀ ĐỘ TRỄ (LATENCY) & RPS
-Trong thiết kế của KLTN này, **RPS, P99 Latency và Error Rate theo từng Service SẼ KHÔNG CÓ TRONG PROMETHEUS NÀY**.
-Nguyên nhân: Các chỉ số này do Envoy sidecar phát ra. Nhưng vì Envoy sidecar nằm sâu bên trong mạng overlay (`10.244.x.x`), một Prometheus đặt NGOÀI cụm (Standalone) không thể định tuyến để thu thập (scrape) trực tiếp. Quyết định kiến trúc là chúng ta sẽ trích xuất các chỉ số này từ **Jaeger traces** (sẽ cài đặt ở bước sau) để cấp cho RL Agent. Dashboard Grafana hiện tại chỉ phản ánh Tài nguyên vật lý (CPU/RAM cAdvisor) và Trạng thái lập lịch (Replica KSM).
-MD_EOF
-
 echo "[3/4] Đẩy cấu hình lên node-observability ($OBS_IP)..."
-rsync -avz --exclude='grafana-data' --exclude='prometheus-data' -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" monitoring-stack/ $SSH_USER@$OBS_IP:~/monitoring-stack/
+rsync -avz --exclude='grafana-data' --exclude='prometheus-data' -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" monitoring-stack/ "$SSH_USER@$OBS_IP:~/monitoring-stack/"
 
 echo "[4/4] Cài đặt Docker và Chạy hệ thống qua SSH..."
-ssh -i $SSH_KEY -o StrictHostKeyChecking=no $SSH_USER@$OBS_IP << 'REMOTE_EOF'
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$OBS_IP" << 'REMOTE_EOF'
+  set -euo pipefail
   if ! command -v docker &> /dev/null; then
-    echo "Đang cài đặt Docker Engine..."
-    sudo apt-get update
-    sudo apt-get install -y ca-certificates curl
+    sudo apt-get update && sudo apt-get install -y ca-certificates curl
     sudo install -m 0755 -d /etc/apt/keyrings
     sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
     sudo chmod a+r /etc/apt/keyrings/docker.asc
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-    sudo apt-get update
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    sudo usermod -aG docker $USER
+    sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    sudo usermod -aG docker "$USER"
   fi
-  DOCKER_VER=$(docker --version)
-  echo "Đã cài đặt: $DOCKER_VER"
-  
-  echo "Ghi nhận version vào README..."
-  # Tránh ghi đè file nhiều lần khi chạy lại
-  grep -qxF "- **Docker Engine:** $DOCKER_VER" ~/monitoring-stack/README.md || echo "- **Docker Engine:** $DOCKER_VER" >> ~/monitoring-stack/README.md
-  
-  echo "Khởi động Monitoring Stack..."
+
   cd ~/monitoring-stack
+  sudo docker compose down
   sudo docker compose up -d
 REMOTE_EOF
 
-echo "============================================="
-echo "✅ HỆ THỐNG GIÁM SÁT ĐÃ SẴN SÀNG!"
-echo "📍 Kiểm tra Prometheus Targets: http://$OBS_IP:9090/targets (Nên có 2 mục UP màu xanh)"
-echo "📍 Truy cập Grafana: http://$OBS_IP:3000 (User/Pass: admin / admin)"
-echo "============================================="
+echo "✅ HOÀN TẤT!"
