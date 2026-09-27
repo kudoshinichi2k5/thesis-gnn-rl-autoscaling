@@ -211,3 +211,16 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$OBS_IP" << 'REMOTE_EOF
   if ! command -v docker &> /dev/null; then
     sudo apt-get update && sudo apt-get install -y ca-certificates curl
     sudo install -m 0755 -d /etc/apt/keyrings
+    sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update && sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    sudo usermod -aG docker "$USER"
+  fi
+
+  cd ~/monitoring-stack
+  sudo docker compose down
+  sudo docker compose up -d
+REMOTE_EOF
+
+echo "✅ HOÀN TẤT!"
