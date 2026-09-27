@@ -14,6 +14,21 @@ rsync -av --delete /tmp/microservices-demo/helm-chart/ "$OB_DIR/chart/"
 echo "[2/4] Xóa cứng loadgenerator..."
 rm -f "$OB_DIR/chart/templates/loadgenerator.yaml"
 
+# ▼▼▼ THÊM ĐOẠN NÀY ▼▼▼
+echo "Patch probe timing cho emailservice/recommendationservice..."
+# Chart KHÔNG expose initialDelaySeconds qua values.yaml cho 2 service này
+# (probe hardcode: periodSeconds=5, initialDelaySeconds mặc định=0). Trên
+# tài nguyên giới hạn, service khởi động chậm hơn 15s (3 x 5s) sẽ bị kubelet
+# kill/restart trước khi kịp sẵn sàng. Patch trực tiếp vì đây là cách duy
+# nhất chỉnh được giá trị này — chạy lại mỗi lần vendor nên không mất khi
+# rsync --delete ghi đè chart ở bước [1/4].
+for svc in emailservice recommendationservice; do
+  f="$OB_DIR/chart/templates/${svc}.yaml"
+  sed -i '/^        readinessProbe:$/a\          initialDelaySeconds: 60' "$f"
+  sed -i '/^        livenessProbe:$/a\          initialDelaySeconds: 60' "$f"
+done
+# ▲▲▲ HẾT ĐOẠN THÊM ▲▲▲
+
 echo "[3/4] Cấu hình values-override.yaml..."
 cat << 'YAML_EOF' > "$OB_DIR/values-override.yaml"
 frontend:

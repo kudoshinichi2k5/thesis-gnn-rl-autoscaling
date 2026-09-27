@@ -9,40 +9,46 @@ frontend:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
 # Cấu hình tài nguyên chung
-adservice:
+adService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-cartservice:
+cartService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-checkoutservice:
+checkoutService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-currencyservice:
+currencyService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-paymentservice:
+paymentService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-productcatalogservice:
+productCatalogService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-shippingservice:
+shippingService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
-# Cấu hình Đặc biệt cho Python Services: Nới lỏng CPU Limits và Probes
-emailservice:
+# # Cấu hình Đặc biệt cho Python Services: Nới lỏng CPU Limits và Probes
+# emailService:
+#   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
+#   livenessProbe:
+#     initialDelaySeconds: 60
+#     timeoutSeconds: 5
+#     periodSeconds: 5
+#   readinessProbe:
+#     initialDelaySeconds: 60
+#     timeoutSeconds: 5
+#     periodSeconds: 5
+
+# recommendationService:
+#   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
+#   livenessProbe:
+#     initialDelaySeconds: 60
+#     timeoutSeconds: 5
+#     periodSeconds: 5
+#   readinessProbe:
+#     initialDelaySeconds: 60
+#     timeoutSeconds: 5
+#     periodSeconds: 5
+
+
+emailService:
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
-  livenessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
-  readinessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
-
-recommendationservice:
+recommendationService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
-  livenessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
-  readinessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
