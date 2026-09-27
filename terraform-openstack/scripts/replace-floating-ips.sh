@@ -184,6 +184,8 @@ while true; do
 
     if [[ ${#INCORRECT_NODES[@]} -eq 0 ]]; then
         echo "All floating IPs match the required prefix ${DESIRED_PREFIX}"
+        echo "Đang cập nhật cluster-setup/node-ips.env..."
+        "${SCRIPT_DIR}/../../cluster-setup/00-generate-node-ips.sh"
         break
     fi
 

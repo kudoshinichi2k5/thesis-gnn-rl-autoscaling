@@ -2,10 +2,12 @@
 # Chạy trực tiếp từ WSL2/Windows
 set -euo pipefail
 
-NODE_IP="192.168.120.175"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/node-ips.env"
+NODE_IP="$NODE_APP_FLOATING_IP"
 SSH_KEY="$HOME/.ssh/kltn_autoscaling"
 SSH_USER="ubuntu"
-JAEGER_IP="10.42.0.93"
+JAEGER_IP="$NODE_OBSERVABILITY_FIXED_IP"
 ISTIO_VERSION="1.31.0"
 
 mkdir -p cluster-setup

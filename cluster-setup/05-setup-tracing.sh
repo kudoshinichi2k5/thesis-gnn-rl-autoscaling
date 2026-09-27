@@ -1,7 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 
-OBS_IP="192.168.120.80"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/node-ips.env"
+OBS_IP="$NODE_OBSERVABILITY_FLOATING_IP"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 echo "[1/2] Kích hoạt Istio Telemetry (Jaeger tracing) trên k3s..."

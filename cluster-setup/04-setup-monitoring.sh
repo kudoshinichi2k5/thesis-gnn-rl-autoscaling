@@ -2,8 +2,10 @@
 # Script cài đặt Standalone Observability (Prometheus, Grafana, KSM, Jaeger)
 set -euo pipefail
 
-OBS_IP="192.168.120.80"
-NODE_APP_PRIVATE_IP="10.42.0.7"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/node-ips.env"
+OBS_IP="$NODE_OBSERVABILITY_FLOATING_IP"
+NODE_APP_PRIVATE_IP="$NODE_APP_FIXED_IP"
 SSH_KEY="$HOME/.ssh/kltn_autoscaling"
 SSH_USER="ubuntu"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
