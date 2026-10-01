@@ -1,9 +1,10 @@
 output "node_fixed_ips" {
   description = "Private fixed IPv4 and externally reachable floating IPv4 addresses for each node."
   value = {
-    for name, node in module.compute.nodes : name => merge(node, {
-      floating_ip = module.floating_ip.addresses[name]
-    })
+    for name, node in module.compute.nodes : name => merge(
+      node,
+      { floating_ip = try(module.floating_ip.addresses[name], null) }
+    )
   }
 }
 

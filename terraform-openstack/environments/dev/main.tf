@@ -1,4 +1,16 @@
 # The root module composes reusable modules and supplies environment-specific values.
+locals {
+  floating_ip_node_names = [
+    for node in var.nodes : node.name
+    if node.role != "app-worker"
+  ]
+
+  floating_ip_node_ports = {
+    for node_name, node_port in module.compute.node_ports : node_name => node_port
+    if contains(local.floating_ip_node_names, node_name)
+  }
+}
+
 module "networking" {
   source = "../../modules/networking"
 
@@ -40,7 +52,7 @@ module "floating_ip" {
   source = "../../modules/floating-ip"
 
   external_network_name = module.networking.external_network_name
-  node_ports            = module.compute.node_ports
+  node_ports            = local.floating_ip_node_ports
 
   depends_on = [module.compute]
 }

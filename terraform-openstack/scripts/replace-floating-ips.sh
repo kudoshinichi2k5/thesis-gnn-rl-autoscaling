@@ -173,6 +173,7 @@ while true; do
         echo "$NODE_ADDRESSES" |
         jq -r --arg prefix "$DESIRED_PREFIX" '
             to_entries[]
+            | select(.value.floating_ip != null)
             | select(.value.floating_ip | startswith($prefix) | not)
             | .key
         '

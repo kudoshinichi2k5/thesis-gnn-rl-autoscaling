@@ -16,6 +16,8 @@ security_group = {
     { name = "kubernetes-api", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 6443, port_range_max = 6443, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     # Public ingress for the Online Boutique frontend exposed through K3s NodePort.
     { name = "nodeport", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 30000, port_range_max = 32767, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    # K3s ServiceLB binds the frontend LoadBalancer service port on every node.
+    { name = "frontend-http", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 80, port_range_max = 80, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "flannel-vxlan", direction = "ingress", ethertype = "IPv4", protocol = "udp", port_range_min = 8472, port_range_max = 8472, remote_group = true },
     { name = "icmp-internal", direction = "ingress", ethertype = "IPv4", protocol = "icmp", remote_group = true },
     # Explicit IPv4 egress allows response traffic and outbound node communication.
@@ -35,10 +37,24 @@ image_id        = "a04bdcd9-40e7-40ba-bd21-7d410965e3a3"
 nodes = [
   {
     name           = "node-app"
-    role           = "app"
+    role           = "control-plane"
+    flavor_id      = "00-0000-0002-02"
+    flavor_name    = "gp.small-2c"
+    volume_size_gb = 20
+  },
+  {
+    name           = "node-app-worker-1"
+    role           = "app-worker"
     flavor_id      = "00-0000-0008-04"
     flavor_name    = "gp.large-4c"
-    volume_size_gb = 120
+    volume_size_gb = 40
+  },
+  {
+    name           = "node-app-worker-2"
+    role           = "app-worker"
+    flavor_id      = "00-0000-0008-04"
+    flavor_name    = "gp.large-4c"
+    volume_size_gb = 40
   },
   {
     name           = "node-observability"

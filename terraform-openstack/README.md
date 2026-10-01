@@ -1,3 +1,5 @@
+Terraform configuration for a non-HA, five-node research environment on UIT NetChallenge OpenStack.
+- Creates `k8s-cluster-sg` with SSH, Kubernetes API, frontend HTTP, NodePort, self-referencing Flannel VXLAN/ICMP, Kubelet metrics, Grafana, Prometheus, Jaeger Collector, Jaeger UI, and managed IPv4 egress rules. Each node receives an explicitly managed Neutron port with this group.
 # OpenStack K8s research cluster
 
 Terraform configuration for a non-HA research cluster on UIT NetChallenge OpenStack.
@@ -10,7 +12,11 @@ The environment root is `environments/dev`; reusable resources live in `modules/
 - Creates `k8s-cluster-sg` with SSH, Kubernetes API, NodePort, self-referencing Flannel VXLAN/ICMP, Kubelet metrics, Grafana, Prometheus, Jaeger Collector, Jaeger UI, and managed IPv4 egress rules. Each node receives an explicitly managed Neutron port with this group.
 - Imports `~/.ssh/kltn_autoscaling.pub` as an OpenStack keypair.
 - Creates `node-app`, `node-observability`, and `node-loadgen`, each booting from a new Cinder volume based on Ubuntu 22.04.
-- Allocates and associates one floating IP per node, then outputs both each node's private fixed IPv4 and public floating IPv4 address.
+- Creates five Ubuntu 22.04 instances: `node-app` as the K3s control-plane, two identical `node-app-worker-*` application workers, plus standalone `node-observability` and `node-loadgen` nodes.
+- Allocates Floating IPs only to `node-app`, `node-observability`, and `node-loadgen`. Workers have private fixed IPs only and are reached through SSH ProxyJump via `node-app`.
+- Outputs a private fixed IPv4 for every node and a Floating IP for the three externally reachable nodes; worker `floating_ip` output values are null.
+
+The requested inventory uses 12 vCPU and 180 GB of boot-volume capacity based on the configured flavor vCPU counts and volume sizes. RAM consumption depends on the OpenStack flavor catalog; confirm it is at most 22 GB before applying so the requested 2 GB reserve remains. The 20 GB storage reserve is exact for the configured 180 GB total against a 200 GB quota.
 
 ## Prerequisites
 
