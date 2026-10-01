@@ -6,6 +6,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./file_sd:/etc/prometheus/file_sd:ro
       - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token:ro
       - prom_data:/prometheus
     command:
