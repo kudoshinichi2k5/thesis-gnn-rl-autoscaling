@@ -32,6 +32,8 @@ cat << EOF > "$OUT_FILE"
 # tự động ở cuối) bất cứ khi nào terraform apply thay đổi IP của node nào.
 NODE_APP_FLOATING_IP="$(get node-app floating_ip)"
 NODE_APP_FIXED_IP="$(get node-app fixed_ip)"
+NODE_WORKER1_FIXED_IP="$(get node-app-worker-1 fixed_ip)"
+NODE_WORKER2_FIXED_IP="$(get node-app-worker-2 fixed_ip)"
 NODE_OBSERVABILITY_FLOATING_IP="$(get node-observability floating_ip)"
 NODE_OBSERVABILITY_FIXED_IP="$(get node-observability fixed_ip)"
 NODE_LOADGEN_FLOATING_IP="$(get node-loadgen floating_ip)"

@@ -11,6 +11,7 @@ if [ ! -f "${SCRIPT_DIR}/node-ips.env" ]; then
 fi
 source "${SCRIPT_DIR}/node-ips.env"
 NODE_IP="$NODE_APP_FLOATING_IP"
+NODE_NAME="node-app"
 SSH_KEY="$HOME/.ssh/kltn_autoscaling"
 SSH_USER="ubuntu"
 
@@ -33,7 +34,7 @@ REMOTE_SCRIPT=$(cat << 'REMOTE_EOF'
   if command -v k3s >/dev/null 2>&1; then
     echo "K3s đã được cài đặt, bỏ qua bước cài mới."
   else
-    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.9+k3s1 INSTALL_K3S_EXEC="server --disable traefik --tls-san __NODE_IP__ --node-external-ip __NODE_IP__ --cluster-cidr 10.244.0.0/16 --service-cidr 10.96.0.0/16" sh -
+    curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.9+k3s1 INSTALL_K3S_EXEC="server --node-name node-app --disable traefik --tls-san __NODE_IP__ --node-external-ip __NODE_IP__ --cluster-cidr 10.244.0.0/16 --service-cidr 10.96.0.0/16" sh -
   fi
 
   echo "Đợi K3s API sẵn sàng..."
@@ -106,7 +107,21 @@ ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" "rm -f /tmp/prometheus-remote-token.txt /
 
 echo "[3/3] Kéo Kubeconfig (Giữ nguyên 127.0.0.1 để dùng qua SSH Tunnel)..."
 mkdir -p ~/.kube
-ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" "cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config
+ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" "cat /etc/rancher/k3s/k3s.yaml" \
+  | sed "s#https://127.0.0.1:6443#https://${NODE_IP}:6443#" > ~/.kube/config
 chmod 600 ~/.kube/config
+
+echo "Lưu node-token để worker join vào cụm..."
+ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" \
+  "sudo cat /var/lib/rancher/k3s/server/node-token" > "${SCRIPT_DIR}/k3s-node-token.txt"
+chmod 600 "${SCRIPT_DIR}/k3s-node-token.txt"
+
+echo "Gắn label và taint control-plane trước khi worker join..."
+kubectl --kubeconfig="$HOME/.kube/config" wait \
+  --for=condition=Ready "node/${NODE_NAME}" --timeout=120s
+kubectl --kubeconfig="$HOME/.kube/config" label node "$NODE_NAME" \
+  node-role=control-plane --overwrite
+kubectl --kubeconfig="$HOME/.kube/config" taint node "$NODE_NAME" \
+  dedicated=control-plane:NoSchedule --overwrite
 
 echo "✅ Hoàn tất cài đặt K3s!"

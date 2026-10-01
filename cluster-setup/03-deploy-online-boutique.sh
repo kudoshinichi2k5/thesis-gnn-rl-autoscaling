@@ -11,6 +11,63 @@ git clone --depth 1 https://github.com/GoogleCloudPlatform/microservices-demo.gi
 CURRENT_HASH=$(cd /tmp/microservices-demo && git rev-parse HEAD)
 rsync -av --delete /tmp/microservices-demo/helm-chart/ "$OB_DIR/chart/"
 
+echo "Patch workload anti-affinity for the two application workers..."
+cat << 'HELPER_EOF' > "$OB_DIR/chart/templates/_pod-anti-affinity.tpl"
+{{- define "onlineboutique.podAntiAffinity" -}}
+{{- $policy := .policy -}}
+{{- if $policy.enabled }}
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: {{ $policy.weight }}
+      podAffinityTerm:
+        topologyKey: {{ $policy.topologyKey | quote }}
+        labelSelector:
+          matchLabels:
+            app: {{ .app | quote }}
+{{- end }}
+{{- end -}}
+HELPER_EOF
+
+cat << 'SCHEDULING_EOF' >> "$OB_DIR/chart/values.yaml"
+
+# Repository-specific scheduling policy consumed by _pod-anti-affinity.tpl.
+workloadScheduling:
+  podAntiAffinity:
+    enabled: true
+    weight: 100
+    topologyKey: kubernetes.io/hostname
+SCHEDULING_EOF
+
+patch_anti_affinity() {
+  local template="$1" app_value="$2" occurrence="${3:-1}"
+  local temp_file="${template}.tmp"
+  awk -v app_value="$app_value" -v occurrence="$occurrence" '
+    /^      containers:$/ {
+      container_count++
+      if (container_count == occurrence) {
+        print "      {{- include `onlineboutique.podAntiAffinity` (dict `policy` .Values.workloadScheduling.podAntiAffinity `app` " app_value ") | nindent 6 }}"
+      }
+    }
+    { print }
+    END { if (container_count < occurrence) exit 1 }
+  ' "$template" > "$temp_file"
+  mv "$temp_file" "$template"
+}
+
+patch_anti_affinity "$OB_DIR/chart/templates/frontend.yaml" '.Values.frontend.name'
+patch_anti_affinity "$OB_DIR/chart/templates/adservice.yaml" '.Values.adService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/cartservice.yaml" '.Values.cartService.name' 1
+patch_anti_affinity "$OB_DIR/chart/templates/cartservice.yaml" '.Values.cartDatabase.inClusterRedis.name' 2
+patch_anti_affinity "$OB_DIR/chart/templates/checkoutservice.yaml" '.Values.checkoutService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/currencyservice.yaml" '.Values.currencyService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/emailservice.yaml" '.Values.emailService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/paymentservice.yaml" '.Values.paymentService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/productcatalogservice.yaml" '.Values.productCatalogService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/recommendationservice.yaml" '.Values.recommendationService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/shippingservice.yaml" '.Values.shippingService.name'
+patch_anti_affinity "$OB_DIR/chart/templates/opentelemetry-collector.yaml" '.Values.opentelemetryCollector.name'
+
 echo "[2/4] Xóa cứng loadgenerator..."
 rm -f "$OB_DIR/chart/templates/loadgenerator.yaml"
 
@@ -25,7 +82,9 @@ echo "Patch probe timing cho emailservice/recommendationservice..."
 for svc in emailservice recommendationservice; do
   f="$OB_DIR/chart/templates/${svc}.yaml"
   sed -i '/^        readinessProbe:$/a\          initialDelaySeconds: 60' "$f"
+  sed -i '/^        readinessProbe:$/a\          timeoutSeconds: 5' "$f"
   sed -i '/^        livenessProbe:$/a\          initialDelaySeconds: 60' "$f"
+  sed -i '/^        livenessProbe:$/a\          timeoutSeconds: 5' "$f"
 done
 # ▲▲▲ HẾT ĐOẠN THÊM ▲▲▲
 
@@ -42,43 +101,33 @@ frontend:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
 # Cấu hình tài nguyên chung
-adservice:
+adService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-cartservice:
+cartService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-checkoutservice:
+checkoutService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-currencyservice:
+currencyService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-paymentservice:
+paymentService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 500m, memory: 512Mi } }
-productcatalogservice:
+productCatalogService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
-shippingservice:
+shippingService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
-# Cấu hình Đặc biệt cho Python Services: Nới lỏng CPU Limits và Probes
-emailservice:
+# Chart không expose cấu hình probe qua values; script patch trực tiếp template.
+emailService:
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
-  livenessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
-  readinessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
 
-recommendationservice:
+recommendationService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
-  livenessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
-  readinessProbe:
-    initialDelaySeconds: 60
-    timeoutSeconds: 5
-    periodSeconds: 5
+
+workloadScheduling:
+  podAntiAffinity:
+    enabled: true
+    weight: 100
+    topologyKey: kubernetes.io/hostname
 YAML_EOF
 
 echo "[4/4] Deploy Online Boutique..."
@@ -93,6 +142,7 @@ cat << MD_EOF > "$OB_DIR/README.md"
 - **Vendor từ:** \`GoogleCloudPlatform/microservices-demo\`
 - **Commit hash:** \`${CURRENT_HASH}\`
 - **Thay đổi chính:** Xóa LoadGenerator, cấu hình Limits nới lỏng cho Python services, ghi đè Probes timeout (60s delay, 5s timeout) trực tiếp qua values. Frontend expose qua service \`frontend-external\` (LoadBalancer, do K3s servicelb cấp EXTERNAL-IP) — chart không hỗ trợ NodePort qua values.
+- **Thay đổi chính:** Xóa LoadGenerator, chỉnh resource overrides theo key camelCase, patch probes của email/recommendation trực tiếp trong template (60s delay, 5s timeout), và thêm preferred pod anti-affinity để trải workload trên hai worker. Frontend expose qua `frontend-external` (LoadBalancer).
 MD_EOF
 
 rm -rf /tmp/microservices-demo

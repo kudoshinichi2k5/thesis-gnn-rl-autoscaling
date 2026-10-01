@@ -6,6 +6,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/node-ips.env"
 OBS_IP="$NODE_OBSERVABILITY_FLOATING_IP"
 NODE_APP_PRIVATE_IP="$NODE_APP_FIXED_IP"
+NODE_WORKER1_PRIVATE_IP="$NODE_WORKER1_FIXED_IP"
+NODE_WORKER2_PRIVATE_IP="$NODE_WORKER2_FIXED_IP"
 SSH_KEY="$HOME/.ssh/kltn_autoscaling"
 SSH_USER="ubuntu"
 export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
@@ -109,13 +111,23 @@ scrape_configs:
       insecure_skip_verify: true
     bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
     metrics_path: /metrics/cadvisor
-    static_configs:
-      - targets: ['${NODE_APP_PRIVATE_IP}:10250']
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/file_sd/kubelet-targets.json
 
   - job_name: 'kube-state-metrics'
     static_configs:
       - targets: ['kube-state-metrics:8080']
 PROM_EOF
+
+mkdir -p monitoring-stack/file_sd
+cat << TARGETS_EOF > monitoring-stack/file_sd/kubelet-targets.json
+[
+  {"targets": ["${NODE_APP_PRIVATE_IP}:10250"], "labels": {"node": "node-app", "node_role": "control-plane"}},
+  {"targets": ["${NODE_WORKER1_PRIVATE_IP}:10250"], "labels": {"node": "node-app-worker-1", "node_role": "app-worker"}},
+  {"targets": ["${NODE_WORKER2_PRIVATE_IP}:10250"], "labels": {"node": "node-app-worker-2", "node_role": "app-worker"}}
+]
+TARGETS_EOF
 
 cat << 'COMPOSE_EOF' > monitoring-stack/docker-compose.yml
 services:
@@ -126,6 +138,7 @@ services:
       - "9090:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./file_sd:/etc/prometheus/file_sd:ro
       - ./prometheus-remote-token.txt:/var/run/secrets/kubernetes.io/serviceaccount/token:ro
       - prom_data:/prometheus
     command:
