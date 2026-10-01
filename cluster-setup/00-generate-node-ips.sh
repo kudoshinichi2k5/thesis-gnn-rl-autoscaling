@@ -25,12 +25,23 @@ get() {
   echo "$NODE_JSON" | jq -er --arg n "$node" --arg f "$field" '.[$n][$f]'
 }
 
+NODE_APP_FLOATING_IP="$(get node-app floating_ip)"
+FRONTEND_NODE_PORT=""
+FRONTEND_URL=""
+if command -v kubectl >/dev/null 2>&1; then
+  FRONTEND_NODE_PORT="$(kubectl --request-timeout=5s get service frontend-external \
+    -n online-boutique -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || true)"
+  if [[ "$FRONTEND_NODE_PORT" =~ ^[0-9]+$ ]]; then
+    FRONTEND_URL="http://${NODE_APP_FLOATING_IP}:${FRONTEND_NODE_PORT}"
+  fi
+fi
+
 cat << EOF > "$OUT_FILE"
 # File này được sinh TỰ ĐỘNG bởi cluster-setup/00-generate-node-ips.sh từ
 # terraform output. KHÔNG sửa tay — mọi thay đổi sẽ mất ở lần chạy sau.
 # Chạy lại script này (hoặc replace-floating-ips.sh, script này đã được gọi
 # tự động ở cuối) bất cứ khi nào terraform apply thay đổi IP của node nào.
-NODE_APP_FLOATING_IP="$(get node-app floating_ip)"
+NODE_APP_FLOATING_IP="${NODE_APP_FLOATING_IP}"
 NODE_APP_FIXED_IP="$(get node-app fixed_ip)"
 NODE_WORKER1_FIXED_IP="$(get node-app-worker-1 fixed_ip)"
 NODE_WORKER2_FIXED_IP="$(get node-app-worker-2 fixed_ip)"
@@ -38,6 +49,8 @@ NODE_OBSERVABILITY_FLOATING_IP="$(get node-observability floating_ip)"
 NODE_OBSERVABILITY_FIXED_IP="$(get node-observability fixed_ip)"
 NODE_LOADGEN_FLOATING_IP="$(get node-loadgen floating_ip)"
 NODE_LOADGEN_FIXED_IP="$(get node-loadgen fixed_ip)"
+FRONTEND_NODE_PORT="${FRONTEND_NODE_PORT}"
+FRONTEND_URL="${FRONTEND_URL}"
 EOF
 
 echo "✅ Đã cập nhật $OUT_FILE:"
