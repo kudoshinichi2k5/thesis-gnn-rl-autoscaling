@@ -60,6 +60,7 @@ services:
       - "16686:16686" # UI
       - "9411:9411"   # Zipkin Collector (cho Envoy)
     environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
       - SPAN_STORAGE_TYPE=badger
       - BADGER_EPHEMERAL=false
       - BADGER_DIRECTORY_VALUE=/badger/data

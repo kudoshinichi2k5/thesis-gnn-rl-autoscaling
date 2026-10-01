@@ -9,6 +9,7 @@ SSH_KEY="$HOME/.ssh/kltn_autoscaling"
 SSH_USER="ubuntu"
 JAEGER_IP="$NODE_OBSERVABILITY_FIXED_IP"
 ISTIO_VERSION="1.31.0"
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 
 mkdir -p cluster-setup
 
@@ -37,14 +38,36 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" << REMOTE_EOF
     --set 'values.pilot.tolerations[0].value=control-plane' \
     --set 'values.pilot.tolerations[0].effect=NoSchedule' \
     --set meshConfig.extensionProviders[0].name=external-jaeger \
-    --set meshConfig.extensionProviders[0].zipkin.service=${JAEGER_IP} \
+    --set meshConfig.extensionProviders[0].zipkin.service=jaeger-collector.external \
     --set meshConfig.extensionProviders[0].zipkin.port=9411 -y
+
+  kubectl apply -f - << SERVICE_ENTRY_EOF
+apiVersion: networking.istio.io/v1
+kind: ServiceEntry
+metadata:
+  name: jaeger-collector
+  namespace: istio-system
+spec:
+  hosts:
+  - jaeger-collector.external
+  location: MESH_EXTERNAL
+  ports:
+  - number: 9411
+    name: http-zipkin
+    protocol: HTTP
+  resolution: STATIC
+  endpoints:
+  - address: ${JAEGER_IP}
+SERVICE_ENTRY_EOF
 
   kubectl create namespace online-boutique --dry-run=client -o yaml | kubectl apply -f -
   kubectl label namespace online-boutique istio-injection=enabled --overwrite
 
   kubectl describe node | grep -A 7 "Allocated resources:" > /tmp/baseline_resources.txt
 REMOTE_EOF
+
+echo "Kiểm tra admission webhook có inject istio-proxy trước khi tiếp tục..."
+bash "${SCRIPT_DIR}/verify-istio-injection.sh" online-boutique
 
 echo "[2/4] Đảm bảo file Telemetry (Sampling 100%) tồn tại..."
 # istio-tracing.yaml là manifest tĩnh, quản lý trong git tại cluster-setup/.
