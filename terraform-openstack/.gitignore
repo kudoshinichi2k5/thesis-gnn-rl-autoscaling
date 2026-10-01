@@ -22,4 +22,3 @@ openstack-openrc.sh
 # IDE
 .vscode/
 .idea/
-cluster-setup/node-ips.env

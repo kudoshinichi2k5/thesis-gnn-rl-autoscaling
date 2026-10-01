@@ -5,3 +5,5 @@ monitoring-stack/jaeger-data/
 cluster-setup/node-ips.env
 cluster-setup/k3s-node-token.txt
 monitoring-stack/file_sd/kubelet-targets.json
+tracker_ai.md
+k8s-manifests/tracker_ai.md
