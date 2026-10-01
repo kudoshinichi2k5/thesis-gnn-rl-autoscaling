@@ -218,3 +218,10 @@ cartDatabase:
 shoppingAssistantService:
   create: false
   name: shoppingassistantservice
+
+# Repository-specific pod placement shared by every Online Boutique workload.
+workloadScheduling:
+  podAntiAffinity:
+    enabled: true
+    weight: 100
+    topologyKey: kubernetes.io/hostname

@@ -33,6 +33,7 @@ metadata:
   name: {{ .Values.opentelemetryCollector.name }}
   namespace: {{ .Release.Namespace }}
 spec:
+    {{- include "onlineboutique.podAntiAffinity" (dict "policy" .Values.workloadScheduling.podAntiAffinity "app" .Values.opentelemetryCollector.name) | nindent 6 }}
   replicas: 1
   selector:
     matchLabels:

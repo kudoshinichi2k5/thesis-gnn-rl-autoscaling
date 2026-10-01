@@ -35,6 +35,7 @@ metadata:
   labels:
     app: {{ .Values.paymentService.name }}
 spec:
+    {{- include "onlineboutique.podAntiAffinity" (dict "policy" .Values.workloadScheduling.podAntiAffinity "app" .Values.paymentService.name) | nindent 6 }}
   selector:
     matchLabels:
       app: {{ .Values.paymentService.name }}
