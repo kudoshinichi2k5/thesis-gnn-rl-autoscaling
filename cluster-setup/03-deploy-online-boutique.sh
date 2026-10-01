@@ -131,10 +131,16 @@ workloadScheduling:
 YAML_EOF
 
 echo "[4/4] Deploy Online Boutique..."
+echo "Kiểm tra Istio injector trước khi tạo workload..."
+bash cluster-setup/verify-istio-injection.sh online-boutique
+
 helm upgrade --install online-boutique "$OB_DIR/chart/" \
   -n online-boutique \
   -f "$OB_DIR/values-override.yaml" \
   --wait --timeout 5m
+
+echo "Xác nhận sidecar đã được inject vào toàn bộ pod..."
+bash cluster-setup/verify-istio-injection.sh online-boutique --check-existing
 
 echo "Tạo file README..."
 cat << MD_EOF > "$OB_DIR/README.md"

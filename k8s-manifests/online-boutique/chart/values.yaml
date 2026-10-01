@@ -219,7 +219,7 @@ shoppingAssistantService:
   create: false
   name: shoppingassistantservice
 
-# Repository-specific pod placement shared by every Online Boutique workload.
+# Repository-specific scheduling policy consumed by _pod-anti-affinity.tpl.
 workloadScheduling:
   podAntiAffinity:
     enabled: true

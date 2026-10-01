@@ -24,32 +24,10 @@ productCatalogService:
 shippingService:
   resources: { requests: { cpu: 150m, memory: 128Mi }, limits: { cpu: 500m, memory: 256Mi } }
 
-# # Cấu hình Đặc biệt cho Python Services: Nới lỏng CPU Limits và Probes
-# emailService:
-#   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
-#   livenessProbe:
-#     initialDelaySeconds: 60
-#     timeoutSeconds: 5
-#     periodSeconds: 5
-#   readinessProbe:
-#     initialDelaySeconds: 60
-#     timeoutSeconds: 5
-#     periodSeconds: 5
-
-# recommendationService:
-#   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
-#   livenessProbe:
-#     initialDelaySeconds: 60
-#     timeoutSeconds: 5
-#     periodSeconds: 5
-#   readinessProbe:
-#     initialDelaySeconds: 60
-#     timeoutSeconds: 5
-#     periodSeconds: 5
-
-
+# Chart không expose cấu hình probe qua values; script patch trực tiếp template.
 emailService:
   resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 1000m, memory: 512Mi } }
+
 recommendationService:
   resources: { requests: { cpu: 150m, memory: 256Mi }, limits: { cpu: 1000m, memory: 512Mi } }
 

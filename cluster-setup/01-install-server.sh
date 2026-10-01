@@ -107,12 +107,11 @@ ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" "rm -f /tmp/prometheus-remote-token.txt /
 
 echo "[3/3] Kéo Kubeconfig (Giữ nguyên 127.0.0.1 để dùng qua SSH Tunnel)..."
 mkdir -p ~/.kube
-ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" "cat /etc/rancher/k3s/k3s.yaml" \
-  | sed "s#https://127.0.0.1:6443#https://${NODE_IP}:6443#" > ~/.kube/config
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" "cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config
 chmod 600 ~/.kube/config
 
 echo "Lưu node-token để worker join vào cụm..."
-ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" \
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" \
   "sudo cat /var/lib/rancher/k3s/server/node-token" > "${SCRIPT_DIR}/k3s-node-token.txt"
 chmod 600 "${SCRIPT_DIR}/k3s-node-token.txt"
 

@@ -33,7 +33,6 @@ metadata:
   name: {{ .Values.opentelemetryCollector.name }}
   namespace: {{ .Release.Namespace }}
 spec:
-    {{- include "onlineboutique.podAntiAffinity" (dict "policy" .Values.workloadScheduling.podAntiAffinity "app" .Values.opentelemetryCollector.name) | nindent 6 }}
   replicas: 1
   selector:
     matchLabels:
@@ -84,6 +83,7 @@ spec:
         - name: collector-gateway-config
           mountPath: /conf
       {{- end }}
+      {{- include `onlineboutique.podAntiAffinity` (dict `policy` .Values.workloadScheduling.podAntiAffinity `app` .Values.opentelemetryCollector.name) | nindent 6 }}
       containers:
       # This gateway container will receive traces and metrics from each microservice
       # and forward it to GCP

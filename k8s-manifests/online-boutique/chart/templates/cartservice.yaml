@@ -47,7 +47,6 @@ spec:
       labels:
         app: {{ .Values.cartService.name }}
     spec:
-      {{- include "onlineboutique.podAntiAffinity" (dict "policy" .Values.workloadScheduling.podAntiAffinity "app" .Values.cartService.name) | nindent 6 }}
       {{- if .Values.serviceAccounts.create }}
       serviceAccountName: {{ .Values.cartService.name }}
       {{- else }}
@@ -65,6 +64,7 @@ spec:
         seccompProfile:
           type: {{ .Values.seccompProfile.type }}
         {{- end }}
+      {{- include `onlineboutique.podAntiAffinity` (dict `policy` .Values.workloadScheduling.podAntiAffinity `app` .Values.cartService.name) | nindent 6 }}
       containers:
       - name: server
         securityContext:
@@ -227,7 +227,6 @@ spec:
       labels:
         app: {{ .Values.cartDatabase.inClusterRedis.name }}
     spec:
-      {{- include "onlineboutique.podAntiAffinity" (dict "policy" .Values.workloadScheduling.podAntiAffinity "app" .Values.cartDatabase.inClusterRedis.name) | nindent 6 }}
       {{- if .Values.serviceAccounts.create }}
       serviceAccountName: {{ .Values.cartDatabase.inClusterRedis.name }}
       {{- else }}
@@ -244,6 +243,7 @@ spec:
           type: {{ .Values.seccompProfile.type }}
         {{- end }}
       {{- end }}
+      {{- include `onlineboutique.podAntiAffinity` (dict `policy` .Values.workloadScheduling.podAntiAffinity `app` .Values.cartDatabase.inClusterRedis.name) | nindent 6 }}
       containers:
       - name: redis
         securityContext:

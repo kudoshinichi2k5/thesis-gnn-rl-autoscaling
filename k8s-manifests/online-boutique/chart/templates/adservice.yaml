@@ -35,7 +35,6 @@ metadata:
   labels:
     app: {{ .Values.adService.name }}
 spec:
-    {{- include "onlineboutique.podAntiAffinity" (dict "policy" .Values.workloadScheduling.podAntiAffinity "app" .Values.adService.name) | nindent 6 }}
   selector:
     matchLabels:
       app: {{ .Values.adService.name }}
@@ -61,6 +60,7 @@ spec:
           type: {{ .Values.seccompProfile.type }}
         {{- end }}
       {{- end }}
+      {{- include `onlineboutique.podAntiAffinity` (dict `policy` .Values.workloadScheduling.podAntiAffinity `app` .Values.adService.name) | nindent 6 }}
       containers:
       - name: server
         securityContext:

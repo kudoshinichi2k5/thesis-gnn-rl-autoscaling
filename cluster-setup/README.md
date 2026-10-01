@@ -1,3 +1,6 @@
+5. Chạy `bash cluster-setup/02-install-istio.sh`. Istio `1.31.0` và Istiod được pin vào control-plane; script đăng ký Jaeger fixed IP qua ServiceEntry `jaeger-collector.external` cổng `9411` để Envoy có cluster đích hợp lệ.
+`verify-istio-injection.sh`: tạo pod server-side dry-run để xác nhận MutatingWebhookConfiguration thêm `istio-proxy`; kiểm tra cả `containers` và `initContainers` vì Kubernetes native sidecar có thể nằm trong initContainers. Với `--check-existing`, rà mọi pod trong namespace. Script 02/03/05 gọi helper để dừng sớm nếu injection hỏng.
+Nếu helper báo thiếu proxy, xem cả `.spec.initContainers`; native sidecar có thể không xuất hiện trong danh sách `.spec.containers`. Nếu sửa Istio/tracing, chạy lại `02-install-istio.sh`, xác nhận preflight thành công, rồi chạy `05-setup-tracing.sh`. Script 05 rollout mọi deployment và dừng nếu pod mới vẫn thiếu sidecar. Không cần dựng lại OpenStack chỉ để xử lý lỗi injection/tracing.
 # Kiến trúc triển khai K3s multi-node
 
 Thư mục này chứa automation dựng lại môi trường benchmark trên OpenStack. K3s chạy trên ba máy trong cùng một cluster: một control-plane và hai worker giống nhau. Prometheus/Grafana/Jaeger và load generator tiếp tục chạy trên hai VM standalone để hạn chế nhiễu tài nguyên lên workload.
@@ -75,6 +78,10 @@ Thực hiện tuần tự; mỗi bước cần được xác nhận trước khi
 - `00-generate-node-ips.sh`: lấy Terraform output; không sửa tay `node-ips.env`.
 - `01-install-server.sh`: cài K3s server, cấp kubeconfig/token, và đặt label/taint trước worker.
 - `01b-install-worker.sh`: nhận một worker private IP, xác thực IP thuộc một trong hai worker, SSH qua control-plane, cài K3s agent, chờ Ready, label node và in danh sách node.
+- `verify-istio-injection.sh`: tạo pod server-side dry-run để xác nhận MutatingWebhookConfiguration thực sự thêm `istio-proxy`; với `--check-existing`, kiểm tra mọi pod đang chạy trong namespace. Script 02/03/05 gọi helper để dừng sớm nếu injection hỏng.
+  Script xác nhận admission injector hoạt động trước khi cho qua bước tiếp theo.
+
+Nếu trước đây pod Online Boutique chỉ có container ứng dụng mà không có `istio-proxy`, sau khi sửa injector hãy chạy lại `02-install-istio.sh`, xác nhận preflight thành công, rồi chạy `05-setup-tracing.sh`. Script 05 rollout mọi deployment và dừng nếu pod mới vẫn thiếu sidecar. Không cần dựng lại OpenStack chỉ để xử lý lỗi injection.
 - `02-install-istio.sh`: cài Istio, cấu hình tài nguyên, scheduling Istiod và Jaeger extension provider.
 - `03-deploy-online-boutique.sh`: vendor/install Helm chart và áp patch có thể tái tạo sau `rsync --delete`.
 - `04-setup-monitoring.sh`: tạo RBAC, kubeconfig KSM, Prometheus config và file SD target list rồi triển khai Docker Compose ở node-observability.
@@ -104,3 +111,32 @@ Thực hiện tuần tự; mỗi bước cần được xác nhận trước khi
 - Token kubelet hiện gắn quyền `system:kubelet-api-admin`; bảo vệ/rotate nếu có dấu hiệu bị lộ.
 - Các UI và một số security-group rules có thể đang mở rộng cho lab. Giới hạn ingress tới IP quản trị trước khi dùng lâu dài.
 - Không in token ra terminal khi tạo worker; script truyền token qua stdin của SSH.
+### Baseline Tài nguyên (Sau khi cài K3s + Istio)
+```text
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests     Limits
+  --------           --------     ------
+  cpu                400m (20%)   500m (25%)
+  memory             396Mi (20%)  682Mi (34%)
+  ephemeral-storage  0 (0%)       0 (0%)
+  hugepages-1Gi      0 (0%)       0 (0%)
+--
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests      Limits
+  --------           --------      ------
+  cpu                1200m (30%)   13 (325%)
+  memory             1408Mi (17%)  6912Mi (87%)
+  ephemeral-storage  0 (0%)        0 (0%)
+  hugepages-1Gi      0 (0%)        0 (0%)
+--
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests      Limits
+  --------           --------      ------
+  cpu                1420m (35%)   15125m (378%)
+  memory             1992Mi (25%)  8448Mi (106%)
+  ephemeral-storage  0 (0%)        0 (0%)
+  hugepages-1Gi      0 (0%)        0 (0%)
+```
