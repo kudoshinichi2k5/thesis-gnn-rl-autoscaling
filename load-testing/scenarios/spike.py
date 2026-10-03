@@ -1,26 +1,28 @@
+import os
+
 from locust import LoadTestShape
 
 
 class SpikeShape(LoadTestShape):
-    """Sharp demand jump for comparing proactive scaling with reactive HPA."""
+    """Low baseline interrupted by short, sharp spikes at a fixed period.
 
-    baseline_seconds = 3 * 60
-    spike_ramp_seconds = 5
-    spike_hold_seconds = 3 * 60
-    recovery_ramp_seconds = 5
-    duration = 10 * 60
+    Robustness stage: tests whether GAT-GRU anticipates out-of-distribution
+    jumps and whether PPO prioritises SLO over cost during a spike.
+    """
+
+    duration = int(os.environ.get("RUN_DURATION_SEC", 30 * 60))
+    baseline_users = 25
+    spike_users = 220
+    spike_seconds = 90           # each spike lasts 90s
+    interval_seconds = 360       # a new spike starts every 6 minutes
+    spawn_rate_baseline = 5
+    spawn_rate_spike = 40        # ramp into the spike fast
 
     def tick(self):
         run_time = self.get_run_time()
+        if run_time >= self.duration:
+            return None
 
-        if run_time < self.baseline_seconds:
-            return 10, 2
-        if run_time < self.baseline_seconds + self.spike_ramp_seconds:
-            return 100, 18
-        if run_time < self.baseline_seconds + self.spike_ramp_seconds + self.spike_hold_seconds:
-            return 100, 1
-        if run_time < self.baseline_seconds + self.spike_ramp_seconds + self.spike_hold_seconds + self.recovery_ramp_seconds:
-            return 10, 18
-        if run_time < self.duration:
-            return 10, 1
-        return None
+        if run_time % self.interval_seconds < self.spike_seconds:
+            return self.spike_users, self.spawn_rate_spike
+        return self.baseline_users, self.spawn_rate_baseline
