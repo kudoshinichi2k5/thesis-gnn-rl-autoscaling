@@ -65,7 +65,7 @@ class OnlineBoutiqueShopper(HttpUser):
                 "city": "Mountain View",
                 "state": "CA",
                 "country": "United States",
-                "credit_card_number": "4434434434434431",
+                "credit_card_number": "4111111111111111",  # Visa test number, passes Luhn
                 "credit_card_expiration_month": "12",
                 "credit_card_expiration_year": str(datetime.now().year + 2),
                 "credit_card_cvv": "672",

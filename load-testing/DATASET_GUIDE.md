@@ -310,7 +310,23 @@ X [S, 12, 11, 15]   E [S, 12, M, 4]   G [S, 12, 5]   Y [S, 6, 11, 2]   edge_inde
 
 ---
 
-## 12. Câu hỏi thường gặp
+## 12. Bộ dataset thứ hai: tải theo mô hình toán học
+
+Thư mục [`math-load-testing/`](../math-load-testing/README.md) thu thêm một bộ dataset với 4 kịch bản **NHPP, MMPP, Bounded Pareto, ON/OFF**. Nguyên tắc (run, 8 run mỗi kịch bản, 30 phút, cooldown, chia theo run, checklist chất lượng) giống hệt bộ này. Khác biệt nằm ở **cách sinh tải**:
+
+| | Bộ này (Locust) | Bộ toán học |
+|---|---|---|
+| Mô hình | **Đóng**: N(t) user, mỗi user chờ phản hồi rồi nghỉ U(1, 3) giây | **Mở**: phát lại trace sinh từ mô hình toán; arrival không chờ phản hồi |
+| Khi cụm quá tải | Tải tự giảm ($X \approx N/(Z+R)$) | Tải giữ nguyên như thiết kế, nên vi phạm SLO lộ rõ |
+| Ground truth của nhu cầu | Không có (chỉ biết số user) | `designed_rate.csv`: nhu cầu thiết kế từng giây |
+| Tái lập | `BURSTY_SEED` cho bursty | Mọi kịch bản có seed: `SEED_BASE + số thứ tự run` |
+| Mô tả trong báo cáo | Hình dạng số user theo thời gian | Mô hình toán chuẩn, có công thức và kiểm định thống kê |
+
+Thời gian thu: 4 kịch bản × 8 run × khoảng 35 phút ≈ **19 giờ**. Phải xuất xong telemetry trong 72 giờ (Jaeger). Hai bộ dùng **split riêng** (`splits.json` và `splits_math.json`) và **không nên trộn** vào cùng một tập train/test, vì chúng thuộc hai phân phối tải khác nhau. Hãy so sánh kết quả mô hình trên từng bộ.
+
+---
+
+## 13. Câu hỏi thường gặp
 
 **Có thể dùng 5 run thay vì 8 không?**
 Có thể (chia được 3/1/1), nhưng train chỉ còn 3 run (khoảng 15 spike) và không chia đều 4-fold được. Hãy dùng learning curve (mục 4.5) để chứng minh 5 run là đủ trước khi chọn.

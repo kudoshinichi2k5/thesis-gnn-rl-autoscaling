@@ -12,7 +12,7 @@ Lý do đằng sau các lựa chọn (run là gì, vì sao 8 run, 30 phút, chia
         │                     │                       │ cAdvisor :10250 / KSM   ◀──── Prometheus :9090
         │                     └─ sau mỗi run: collect_metrics.py ── query_range / api/traces ──┘
         └──────── rsync results/<scenario>/run_XX/ ◀──┘
- preprocess_gatgru.ipynb ──▶ processed/gatgru_dataset.npz (+ metadata.json, timeseries_raw.csv)
+ preprocess_gatgru ──▶ feature_selection_gatgru ──▶ train_gatgru ──▶ processed/gatgru_predictions_test.npz
 ```
 
 Lý do thiết kế:
@@ -30,8 +30,12 @@ Lý do thiết kế:
 | `scenarios/bursty.py` | Kịch bản Bursty |
 | `run-scenario.sh` | Chạy N run của một kịch bản trên `node-loadgen`, xuất telemetry, kéo kết quả về `results/` |
 | `collect_metrics.py` | Xuất metric của một run từ Prometheus + Jaeger thành CSV (chạy trên `node-loadgen`) |
-| `preprocess_gatgru.ipynb` | Tiền xử lý thành tensor đồ thị cho GAT-GRU; giải thích từng feature |
+| `preprocess_gatgru.ipynb` | Tiền xử lý thành dữ liệu đồ thị cho GAT-GRU; giải thích từng feature |
+| `feature_selection_gatgru.ipynb` | Chọn feature nút và feature cạnh: lọc thống kê + permutation importance |
+| `train_gatgru.ipynb` | Tìm siêu tham số (Optuna), huấn luyện lại 5 seed, đánh giá test, xem attention |
 | `requirements.txt` | `locust==2.31.8`, `requests` (cài vào venv trên `node-loadgen`) |
+
+Code mô hình và xử lý dữ liệu nằm trong [`../modeling-common/`](../modeling-common/README.md), dùng chung với baseline LSTM ([`../lstm-load-testing/`](../lstm-load-testing/README.md)).
 
 ## Kịch bản tải
 
@@ -45,7 +49,6 @@ Mỗi run mặc định dài **30 phút** (`RUN_DURATION_SEC`). Người dùng n
 
 Mỗi run `bursty` mặc định có chuỗi burst khác nhau. Đặt `BURSTY_SEED=<số>` nếu cần lặp lại đúng một run.
 
-> Đề cương có thêm kịch bản **Ramp**. Có thể thêm `scenarios/ramp.py` theo cùng mẫu, ví dụ tăng tuyến tính 10 → 150 user trong 80% thời gian rồi giữ, và thêm `ramp` vào regex kiểm tra tham số trong `run-scenario.sh`. Notebook tự nhận mọi tên kịch bản có trong `results/`.
 
 ## Điều kiện tiên quyết
 
@@ -118,16 +121,15 @@ Biến môi trường tùy chọn:
 
 #### Khuyến nghị: thu thêm dữ liệu có autoscaler
 
-Nếu không có autoscaler thì `replicas` luôn bằng 1. Mô hình vẫn học được quan hệ tải–tài nguyên, nhưng PPO cần thấy **ảnh hưởng của việc thay đổi replica** (CPU trên mỗi pod giảm, latency hồi phục). Nên thu thêm một đợt với HPA làm "chính sách hành vi":
+Nếu không có autoscaler thì `replicas` luôn bằng 1. Khi đó bước feature selection sẽ thấy `replicas` là hằng số (feature này vẫn được giữ vì là biến PPO điều khiển, nhưng không mang thông tin), và PPO không thấy được **ảnh hưởng của việc thay đổi replica** (CPU trên mỗi pod giảm, latency hồi phục). Nên thu thêm một đợt với HPA baseline làm "chính sách hành vi":
 
 ```bash
-for d in frontend cartservice checkoutservice currencyservice productcatalogservice recommendationservice; do
-  kubectl -n online-boutique autoscale deployment "$d" --cpu-percent=70 --min=1 --max=4
-done
-AUTOSCALER=hpa bash load-testing/run-scenario.sh spike 4
-kubectl -n online-boutique delete hpa --all          # tắt HPA khi xong
-kubectl -n online-boutique scale deployment --all --replicas=1
+bash cluster-setup/07-setup-hpa.sh apply       # HPA: CPU 70% container 'server', scale down sau 5 phút
+for s in normal spike bursty; do AUTOSCALER=hpa bash load-testing/run-scenario.sh "$s" 4; done
+bash cluster-setup/07-setup-hpa.sh delete      # xóa HPA và scale về 1 replica
 ```
+
+Cấu hình HPA nằm ở `k8s-manifests/hpa/hpa-online-boutique.yaml`. Nó dùng `ContainerResource`, chỉ tính CPU của container ứng dụng `server`, vì nếu tính cả pod thì sidecar `istio-proxy` làm sai lệch ngưỡng 70%. Cùng file này cũng là baseline HPA trong thực nghiệm so sánh cuối.
 
 ### Bước 4. Kiểm tra chất lượng từng run
 
@@ -145,27 +147,33 @@ cat load-testing/results/spike/run_03/collect_report.json
 
 `locust_exit_code = 1` trong `meta.json` là bình thường khi có request lỗi, ví dụ lúc spike làm hệ thống quá tải. Run vẫn được thu.
 
-### Bước 5. Tiền xử lý cho GAT-GRU
+### Bước 5. Tiền xử lý, chọn feature, huấn luyện GAT-GRU
 
 ```bash
+pip install -r modeling-common/requirements-ml.txt     # numpy, pandas, matplotlib, torch, optuna, jupyter
 cd load-testing
-pip install numpy pandas matplotlib jupyter
-jupyter notebook preprocess_gatgru.ipynb
+jupyter notebook
 ```
 
-Chạy toàn bộ notebook. Khi `results/` chưa có run thật, notebook tự chuyển sang **chế độ demo** với dữ liệu giả lập đúng định dạng file, để kiểm tra pipeline. Kết quả nằm trong `load-testing/processed/`:
+Chạy lần lượt (mỗi notebook đọc đầu ra của notebook trước trong `processed/`):
 
-| File | Nội dung |
-|---|---|
-| `gatgru_dataset.npz` | `X_*` [S, w, N, F], `E_*` [S, w, M, Fe], `G_*` [S, w, Fg], `Y_*`/`Y_raw_*` [S, h, N, K], `info_*`, `edge_index` [2, M] cho train/val/test |
-| `metadata.json` | Service, cạnh, tên/nhóm feature, phép biến đổi, tham số scaler, `WINDOW`/`HORIZON`, phân chia run |
-| `timeseries_raw.csv` | Bảng đơn vị gốc đã căn chỉnh (scenario, run, t, service, feature); đầu vào cho môi trường PPO |
+| Thứ tự | Notebook | Đầu ra trong `processed/` |
+|---|---|---|
+| 1 | `preprocess_gatgru.ipynb` | `runs_raw.npz` (mảng thô từng run + split), `gatgru_dataset.npz` (cửa sổ mặc định w = 12), `metadata.json`, `timeseries_raw.csv` (cho PPO). Tạo `modeling-common/splits.json` nếu chưa có |
+| 2 | `feature_selection_gatgru.ipynb` | `selected_features.json`: feature nút và cạnh giữ lại, kèm báo cáo từng bước |
+| 3 | `train_gatgru.ipynb` | `gatgru_predictions_test.npz`, `gatgru_model.pt`, `gatgru_best_config.json` |
 
-Mặc định: `w = 12` bước (2 phút quá khứ), `h = 6` bước (dự báo 60s tới, đủ để bao thời gian một pod mới sẵn sàng). Target là `rps_in` và `cpu_cores` của từng service.
+Sau đó chạy phần LSTM và notebook so sánh trong [`../lstm-load-testing/`](../lstm-load-testing/README.md).
+
+- Biến `DATASET` ở đầu mỗi notebook: `'load-testing'` (mặc định, dữ liệu thư mục này) hoặc `'math'` (dataset theo mô hình toán học, xem [`../math-load-testing/`](../math-load-testing/README.md)). Mỗi bộ có split và thư mục `processed*/` riêng.
+- Khi `results/` chưa có run thật, các notebook tự chuyển sang **chế độ demo** (dữ liệu giả lập đúng định dạng file, ghi vào `processed_demo/`, ngân sách tune rất nhỏ) để kiểm tra pipeline.
+- `h = 6` bước (dự báo 60s tới, đủ bao thời gian một pod mới sẵn sàng) được cố định. Window `w` ∈ {6, 12, 18} được tune.
+- Target là `rps_in` và `cpu_cores` của từng service.
+- Quy trình chọn feature và tune được mô tả trong [`../modeling-common/README.md`](../modeling-common/README.md).
 
 ## Feature đưa vào mô hình (tóm tắt)
 
-Notebook (mục 5) giải thích chi tiết từng feature. Nguyên tắc chung: **chỉ dùng những gì controller quan sát được khi chạy thật** từ Prometheus/Jaeger. Số user của Locust **không** là feature, chỉ dùng để kiểm tra độ phủ.
+Notebook `preprocess_gatgru.ipynb` giải thích chi tiết từng feature; `feature_selection_gatgru.ipynb` loại các feature không cần thiết. Nguyên tắc chung: **chỉ dùng những gì controller quan sát được khi chạy thật** từ Prometheus/Jaeger. Số user của Locust **không** là feature, chỉ dùng để kiểm tra độ phủ.
 
 | Nhóm | Feature | Mục tiêu |
 |---|---|---|

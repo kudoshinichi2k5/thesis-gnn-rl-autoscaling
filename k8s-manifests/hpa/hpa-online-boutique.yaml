@@ -1,0 +1,425 @@
+# Baseline HPA cho Online Boutique.
+#
+# - Scale up khi CPU của container ứng dụng vượt 70% CPU request.
+# - Scale down chỉ sau 5 phút (stabilizationWindowSeconds: 300) CPU thấp liên tục.
+# - Dùng ContainerResource (container "server") thay vì Resource: pod có thêm
+#   sidecar istio-proxy (request 100m). Nếu tính theo cả pod thì 70% không còn
+#   là 70% của ứng dụng.
+#
+# Dùng cho cả (1) thu dữ liệu có autoscaler (AUTOSCALER=hpa) và (2) baseline
+# trong thực nghiệm so sánh với GAT-GRU + PPO. Áp/xóa bằng:
+#   bash cluster-setup/07-setup-hpa.sh apply|delete|status
+#
+# Áp cho cả 10 service ứng dụng. Riêng redis-cart giữ cố định 1 replica cho mọi
+# phương pháp so sánh: đây là Redis đơn (stateful), thêm replica sẽ tạo nhiều
+# instance độc lập và chia tách dữ liệu giỏ hàng.
+# (Không dùng YAML anchor vì anchor không có hiệu lực giữa các document '---'.)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: cartservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cartservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: checkoutservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: checkoutservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: currencyservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: currencyservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: productcatalogservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: productcatalogservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: recommendationservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: recommendationservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: adservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: adservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: emailservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: emailservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: paymentservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: paymentservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: shippingservice
+  namespace: online-boutique
+  labels:
+    app.kubernetes.io/part-of: thesis-autoscaling-baseline
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shippingservice
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    - type: ContainerResource
+      containerResource:
+        name: cpu
+        container: server
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0        # scale up ngay khi vượt ngưỡng
+      selectPolicy: Max
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 15
+        - type: Pods
+          value: 4
+          periodSeconds: 15
+    scaleDown:
+      stabilizationWindowSeconds: 300      # chỉ scale down sau 5 phút CPU thấp
+      selectPolicy: Max
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60

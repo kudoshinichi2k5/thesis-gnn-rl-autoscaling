@@ -1,0 +1,7 @@
+# Môi trường huấn luyện (máy cá nhân hoặc Colab), KHÔNG cài lên node-loadgen.
+numpy>=1.26
+pandas>=2.1
+matplotlib>=3.8
+torch>=2.2          # CPU là đủ cho dataset này; GPU (Colab) giúp tune nhanh hơn
+optuna>=3.5
+jupyter
