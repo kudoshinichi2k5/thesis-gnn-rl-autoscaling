@@ -40,12 +40,13 @@ CONFIG = importlib.import_module(f'scenarios.{SCENARIO}').CONFIG
 PRODUCT_IDS = ('0PUK6V6EV0', '1YMWWN1N4O', '2ZYFJ3GM2N', '66VCHSJNUP', '6E92ZMYYFZ',
                '9SIQT8TOJO', 'L9ECAV7KIM', 'LS4PSXUNUM', 'OLJCESPC7Z')
 CURRENCIES = ('USD', 'EUR', 'CAD', 'JPY', 'GBP', 'TRY')
-# Same action mix as load-testing/locustfile.py (browse-heavy, occasional checkout).
+# Browse-heavy action mix with occasional checkout.
 ACTIONS = (('browse', 12), ('product', 7), ('view_cart', 3), ('add', 3), ('checkout', 1), ('currency', 1))
 CHECKOUT_FORM = {
     'email': 'math-shopper@example.com', 'street_address': '1600 Amphitheatre Parkway', 'zip_code': '94043',
     'city': 'Mountain View', 'state': 'CA', 'country': 'United States',
-    'credit_card_number': '4111111111111111',  # Visa test number, passes Luhn 'credit_card_expiration_month': '12',
+    'credit_card_number': '4111111111111111',  # Visa test number, passes Luhn
+    'credit_card_expiration_month': '12',
     'credit_card_expiration_year': str(datetime.now().year + 2), 'credit_card_cvv': '672',
 }
 
