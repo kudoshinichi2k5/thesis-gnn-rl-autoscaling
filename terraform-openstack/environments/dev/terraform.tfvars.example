@@ -1,5 +1,4 @@
-# Copy this file to terraform.tfvars and adjust environment-specific values.
-# Authentication is supplied by OS_* variables from openstack-openrc.sh.
+# This file intentionally contains no credentials; authentication uses OS_*.
 external_network_name = "Public_Net"
 external_network_id   = "c3455e8f-ea16-4f5d-ad5e-5c4292015a0d"
 private_network_name  = "k8s-cluster-net"
@@ -14,25 +13,27 @@ security_group = {
   rules = [
     { name = "ssh", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 22, port_range_max = 22, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "kubernetes-api", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 6443, port_range_max = 6443, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
-    # Public ingress for the Online Boutique frontend exposed through K3s NodePort.
-    { name = "nodeport", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 30000, port_range_max = 32767, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
-    # K3s ServiceLB binds the frontend LoadBalancer service port on every node.
+    # Online Boutique frontend, exposed via K3s servicelb (Klipper) as a
+    # LoadBalancer service. Klipper binds this exact hostPort on the node
+    # directly (không qua dải NodePort bên dưới), nên phải mở riêng.
     { name = "frontend-http", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 80, port_range_max = 80, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
+    # Giữ lại cho service nào expose trực tiếp kiểu NodePort (không qua
+    # servicelb/LoadBalancer). Hiện Online Boutique không dùng rule này.
+    { name = "nodeport", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 30000, port_range_max = 32767, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "flannel-vxlan", direction = "ingress", ethertype = "IPv4", protocol = "udp", port_range_min = 8472, port_range_max = 8472, remote_group = true },
-    { name = "icmp-internal", direction = "ingress", ethertype = "IPv4", protocol = "icmp", remote_group = true },
-    # Explicit IPv4 egress allows response traffic and outbound node communication.
+    { name = "icmp-all", direction = "ingress", ethertype = "IPv4", protocol = "icmp", remote_ip_prefix = "0.0.0.0/0", remote_group = false },    
     { name = "egress-all", direction = "egress", ethertype = "IPv4", remote_group = false },
     { name = "kubelet-metrics", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 10250, port_range_max = 10250, remote_group = true },
     { name = "grafana-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 3000, port_range_max = 3000, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "prometheus-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 9090, port_range_max = 9090, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
     { name = "jaeger-collector", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 9411, port_range_max = 9411, remote_group = true },
-    # Public UI access; restrict this prefix to an administrator CIDR outside development.
     { name = "jaeger-ui", direction = "ingress", ethertype = "IPv4", protocol = "tcp", port_range_min = 16686, port_range_max = 16686, remote_ip_prefix = "0.0.0.0/0", remote_group = false },
   ]
 }
 keypair_name    = "kltn-autoscaling"
 public_key_path = "~/.ssh/kltn_autoscaling.pub"
-image_id        = "a04bdcd9-40e7-40ba-bd21-7d410965e3a3"
+# image_id        = "a04bdcd9-40e7-40ba-bd21-7d410965e3a3"
+image_id        = "dc7a3e79-9d48-429b-9689-36773e195f63" # Ubuntu 22.04 LTS community
 
 nodes = [
   {
@@ -59,8 +60,8 @@ nodes = [
   {
     name           = "node-observability"
     role           = "observability"
-    flavor_id      = "00-0000-0002-01"
-    flavor_name    = "gp.small-1c"
+    flavor_id      = "00-0000-0004-04"
+    flavor_name    = "gp.medium-4c"
     volume_size_gb = 50
   },
   {
