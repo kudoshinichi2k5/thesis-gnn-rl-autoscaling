@@ -1,0 +1,4 @@
+{"scenario": "pareto", "run_id": "run_02", "pipeline": "math", "arrival_model": "open",
+ "seed": 1002, "start": 1791441843, "end": 1791443649, "duration_sec": 1800,
+ "step_sec": 10, "frontend_url": "http://192.168.120.242:32058", "max_concurrent": 400,
+ "autoscaler": "hpa", "replicas_at_start": 1, "locust_exit_code": 0}

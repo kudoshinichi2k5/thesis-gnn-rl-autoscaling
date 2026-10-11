@@ -1,0 +1,6 @@
+Method,Name,Error,Occurrences
+GET,GET /product/[id],HTTPError('503 Server Error: Service Unavailable for url: GET /product/[id]'),1
+GET,GET /product/[id],RemoteDisconnected('Remote end closed connection without response'),1
+POST,POST /cart,HTTPError('503 Server Error: Service Unavailable for url: POST /cart'),1
+POST,POST /setCurrency,HTTPError('503 Server Error: Service Unavailable for url: POST /setCurrency'),1
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),1

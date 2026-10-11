@@ -1,0 +1,7 @@
+Method,Name,Error,Occurrences
+GET,GET /,"ConnectionRefusedError(111, 'Connection refused')",4
+GET,GET /product/[id],HTTPError('503 Server Error: Service Unavailable for url: GET /product/[id]'),1
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),2
+GET,GET /,"OSError(113, 'No route to host')",2
+GET,GET /product/[id],"ConnectionRefusedError(111, 'Connection refused')",1
+GET,GET /cart,"OSError(113, 'No route to host')",1

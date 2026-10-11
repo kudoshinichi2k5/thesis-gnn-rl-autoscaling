@@ -1,0 +1,7 @@
+Method,Name,Error,Occurrences
+GET,GET /,"ConnectionRefusedError(111, 'Connection refused')",1
+POST,POST /cart,HTTPError('503 Server Error: Service Unavailable for url: POST /cart'),1
+GET,GET /cart,HTTPError('503 Server Error: Service Unavailable for url: GET /cart'),1
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),4
+GET,GET /,"OSError(113, 'No route to host')",2
+POST,POST /cart,"OSError(113, 'No route to host')",1

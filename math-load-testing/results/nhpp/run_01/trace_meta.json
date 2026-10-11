@@ -1,0 +1,11 @@
+{
+ "model": "nhpp",
+ "seed": 1002,
+ "duration": 1800,
+ "meta": {
+  "phase": 3.2732153767986683
+ },
+ "expected_mean_rps": 42.0,
+ "designed_mean_rps": 41.99999999999998,
+ "n_events": 12641
+}

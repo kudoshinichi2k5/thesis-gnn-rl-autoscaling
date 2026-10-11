@@ -1,0 +1,15 @@
+{
+ "planned": 12674,
+ "started": 12674,
+ "dropped": 0,
+ "completed": 12594,
+ "failed": 0,
+ "max_in_flight": 181,
+ "expected_mean_rps": 42.0,
+ "designed_mean_rps": 42.00000000000008,
+ "dropped_ratio": 0.0,
+ "scenario": "nhpp",
+ "seed": 1006,
+ "duration": 1800,
+ "max_concurrent": 400
+}

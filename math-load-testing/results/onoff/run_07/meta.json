@@ -1,0 +1,4 @@
+{"scenario": "onoff", "run_id": "run_07", "pipeline": "math", "arrival_model": "open",
+ "seed": 1007, "start": 1791432059, "end": 1791433865, "duration_sec": 1800,
+ "step_sec": 10, "frontend_url": "http://192.168.120.242:32058", "max_concurrent": 400,
+ "autoscaler": "hpa", "replicas_at_start": 1, "locust_exit_code": 0}

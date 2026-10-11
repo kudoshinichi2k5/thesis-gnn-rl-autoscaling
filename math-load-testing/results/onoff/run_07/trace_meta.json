@@ -1,0 +1,9 @@
+{
+ "model": "onoff",
+ "seed": 1007,
+ "duration": 1800,
+ "meta": {},
+ "expected_mean_rps": 26.846908284927224,
+ "designed_mean_rps": 27.645,
+ "n_events": 49768
+}

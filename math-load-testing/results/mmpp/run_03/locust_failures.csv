@@ -1,0 +1,3 @@
+Method,Name,Error,Occurrences
+POST,POST /cart,HTTPError('503 Server Error: Service Unavailable for url: POST /cart'),2
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),1

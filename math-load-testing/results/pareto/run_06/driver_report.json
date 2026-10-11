@@ -1,0 +1,15 @@
+{
+ "planned": 5391,
+ "started": 5391,
+ "dropped": 0,
+ "completed": 5381,
+ "failed": 0,
+ "max_in_flight": 40,
+ "expected_mean_rps": 20.284452493969916,
+ "designed_mean_rps": 20.28445249396945,
+ "dropped_ratio": 0.0,
+ "scenario": "pareto",
+ "seed": 1006,
+ "duration": 1800,
+ "max_concurrent": 400
+}
