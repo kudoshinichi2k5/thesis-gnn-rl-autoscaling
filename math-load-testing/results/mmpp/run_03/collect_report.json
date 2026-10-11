@@ -1,0 +1,36 @@
+{
+  "start": 1791389250,
+  "end": 1791391058,
+  "step": 10,
+  "prometheus_series": {
+    "cpu_cores": 26,
+    "cpu_sidecar_cores": 26,
+    "cpu_throttled_periods": 26,
+    "cpu_total_periods": 26,
+    "mem_bytes": 31,
+    "net_rx_bps": 26,
+    "net_tx_bps": 26,
+    "cpu_request_cores": 34,
+    "cpu_limit_cores": 34,
+    "restarts_total": 27,
+    "replicas": 11,
+    "replicas_desired": 11
+  },
+  "jaeger_truncated_windows": 0,
+  "jaeger_services": {
+    "adservice": "adservice.online-boutique",
+    "cartservice": "cartservice.online-boutique",
+    "checkoutservice": "checkoutservice.online-boutique",
+    "currencyservice": "currencyservice.online-boutique",
+    "emailservice": "emailservice.online-boutique",
+    "frontend": "frontend.online-boutique",
+    "paymentservice": "paymentservice.online-boutique",
+    "productcatalogservice": "productcatalogservice.online-boutique",
+    "recommendationservice": "recommendationservice.online-boutique",
+    "shippingservice": "shippingservice.online-boutique"
+  },
+  "edge_rows": 1659,
+  "service_rows": 1393,
+  "node_rows": 1991,
+  "elapsed_sec": 146.3
+}

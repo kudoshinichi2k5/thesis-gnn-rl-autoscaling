@@ -1,0 +1,5 @@
+Method,Name,Error,Occurrences
+GET,GET /product/[id],HTTPError('503 Server Error: Service Unavailable for url: GET /product/[id]'),1
+GET,GET /product/[id],RemoteDisconnected('Remote end closed connection without response'),1
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),2
+GET,GET /,"OSError(113, 'No route to host')",1

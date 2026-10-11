@@ -1,0 +1,6 @@
+Method,Name,Error,Occurrences
+GET,GET /product/[id],RemoteDisconnected('Remote end closed connection without response'),3
+GET,GET /cart,HTTPError('503 Server Error: Service Unavailable for url: GET /cart'),1
+GET,GET /,"OSError(113, 'No route to host')",2
+POST,POST /cart,RemoteDisconnected('Remote end closed connection without response'),1
+GET,GET /,RemoteDisconnected('Remote end closed connection without response'),1

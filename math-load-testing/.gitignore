@@ -1,4 +1,6 @@
-results/*
-!results/.gitkeep
+node-ips.env
+.venv/
+processed_math/
+processed_math_demo/
 __pycache__/
 .ipynb_checkpoints/

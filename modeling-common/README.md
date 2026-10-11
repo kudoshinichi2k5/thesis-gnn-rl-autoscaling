@@ -1,22 +1,22 @@
 # modeling-common: code dùng chung cho GAT-GRU và baseline LSTM
 
-Thư mục này chứa toàn bộ logic dữ liệu, chọn feature, huấn luyện, tìm siêu tham số và đánh giá dự báo. Cả [`load-testing/`](../load-testing/README.md) (GAT-GRU) và [`lstm-load-testing/`](../lstm-load-testing/README.md) (LSTM) đều import cùng module này. **Vì code là một, quy trình của hai mô hình giống hệt nhau.** Đây là điều kiện để kết luận "GAT-GRU tốt hơn hay kém hơn LSTM" là do **đồ thị**, chứ không phải do khác biệt trong xử lý dữ liệu hay công sức tune.
+Thư mục này chứa toàn bộ logic dữ liệu, chọn feature, huấn luyện, tìm siêu tham số và đánh giá dự báo. Cả [`math-load-testing/`](../math-load-testing/README.md) (GAT-GRU) và [`lstm-load-testing/`](../lstm-load-testing/README.md) (LSTM) đều import cùng module này và đọc cùng các run trong `math-load-testing/results/`. **Vì code là một, quy trình của hai mô hình giống hệt nhau.** Đây là điều kiện để kết luận "GAT-GRU tốt hơn hay kém hơn LSTM" là do **đồ thị**, chứ không phải do khác biệt trong xử lý dữ liệu hay công sức tune.
 
 ## Các module
 
 | File | Phụ thuộc | Nội dung |
 |---|---|---|
-| `forecast_data.py` | numpy, pandas | Hằng số (service, topology, feature, target, `HORIZON = 6`); đọc run; căn lưới 10s; tính feature; chia tập dùng chung (`splits.json`); chuẩn hóa (clip p99,9 → log1p → z-score fit trên train); cắt cửa sổ trượt; dữ liệu demo |
+| `forecast_data.py` | numpy, pandas | Hằng số (service, topology, feature, target, `HORIZON = 6`); đọc run; căn lưới 10s; tính feature; chia tập dùng chung (`splits_math.json`); chuẩn hóa (clip p99,9 → log1p → z-score fit trên train); cắt cửa sổ trượt; dữ liệu demo |
 | `feature_selection.py` | numpy, pandas | Bước 1 của chọn feature (lọc thống kê) và luật chọn theo permutation importance |
 | `forecast_torch.py` | PyTorch, Optuna | `LSTMForecaster`, `GATGRUForecaster` (GAT có feature cạnh, viết bằng PyTorch thuần); vòng huấn luyện; Optuna; permutation importance; huấn luyện lại nhiều seed; đo thời gian suy luận |
 | `forecast_metrics.py` | numpy, pandas | Quy ước file dự đoán; MAE/RMSE; sai số dự báo thiếu/thừa; theo khoảng dự báo, kịch bản, service; cửa sổ đầu spike; sign test theo run |
 | `requirements-ml.txt` | | Môi trường huấn luyện (máy cá nhân hoặc Colab), không cài lên `node-loadgen` |
-| `splits.json`, `splits_math.json` | | **Sinh tự động** lần đầu chạy notebook tiền xử lý: một file cho dataset Locust (`DATASET = 'load-testing'`), một file cho dataset toán học (`DATASET = 'math'`). Phân chia train/val/test theo run. **Commit các file này** sau khi thu xong dữ liệu để mọi lần tune/đánh giá dùng cùng tập test |
+| `splits_math.json` | | **Sinh tự động** lần đầu chạy notebook tiền xử lý. Phân chia train/val/test theo run. **Commit file này** sau khi thu xong dữ liệu để mọi lần tune/đánh giá dùng cùng tập test |
 
 ## Quy trình chung (cho mỗi mô hình)
 
 ```text
-preprocess_<model>  ──▶ runs_raw.npz (mảng thô, mọi feature ứng viên) + splits.json (dùng chung)
+preprocess_<model>  ──▶ runs_raw.npz (mảng thô, mọi feature ứng viên) + splits_math.json (dùng chung)
         │
 feature_selection_<model>
         │  Bước 1  lọc thống kê (train): gần hằng số · độ liên quan với target tương lai · trùng lặp
@@ -34,7 +34,7 @@ compare_lstm_gatgru (lstm-load-testing/)
 
 | Lớp | Bắt được | Không bắt được |
 |---|---|---|
-| **Lọc thống kê** (không cần mô hình, nhanh) | Feature không đổi (vd. `restarts_delta`, hoặc `replicas` khi không có HPA), cặp gần như trùng nhau (`net_rx`/`net_tx`, `latency_p50`/`p95`, `rps_in`/`rps_per_replica` khi replica cố định) | Feature có tương quan với target nhưng mô hình không dùng tới, hoặc tương tác phi tuyến |
+| **Lọc thống kê** (không cần mô hình, nhanh) | Feature không đổi (vd. `restarts_delta`), cặp gần như trùng nhau (`net_rx`/`net_tx`, `latency_p50`/`p95`, `rps_in`/`rps_per_replica` khi replica ít thay đổi) | Feature có tương quan với target nhưng mô hình không dùng tới, hoặc tương tác phi tuyến |
 | **Permutation importance** (theo từng mô hình) | Feature mà *chính mô hình đó* thực sự dựa vào. Xáo trộn feature trên val làm MAE tăng thì feature có ích | Hai feature thay thế được cho nhau có thể đều trông "không quan trọng"; vì vậy cần bước lọc trùng lặp trước, và bước kiểm tra lại sau |
 
 - Feature **bắt buộc giữ**: `rps_in`, `cpu_cores` (target dùng làm đầu vào tự hồi quy) và `replicas` (biến PPO điều khiển).
@@ -83,9 +83,7 @@ Một mô hình mới (ví dụ proactive baseline cho thực nghiệm cuối) c
 pip install -r modeling-common/requirements-ml.txt
 ```
 
-Notebook nằm trong `load-testing/` và `lstm-load-testing/`, và import module bằng `sys.path.insert(0, '../modeling-common')`.
+Notebook nằm trong `math-load-testing/` (GAT-GRU) và `lstm-load-testing/` (LSTM), và import module bằng `sys.path.insert(0, '../modeling-common')`.
 
-- **Chọn dataset** bằng biến `DATASET` ở đầu mỗi notebook:
-  - `'load-testing'`: đọc `load-testing/results/`, dùng `splits.json`, ghi ra `processed/`;
-  - `'math'`: đọc `math-load-testing/results/`, dùng `splits_math.json`, ghi ra `processed_math/`.
-- **Chế độ demo:** khi chưa có run thật, mọi notebook vẫn chạy được. Dữ liệu giả lập (`demo_results*/`, cho cả 3 kịch bản Locust và 4 kịch bản toán học) được ghi vào `processed*_demo/`, với ngân sách tune rất nhỏ. Mọi đường dẫn demo đều nằm trong `.gitignore`.
+- **Dữ liệu:** mọi notebook đọc `math-load-testing/results/`, dùng `splits_math.json`, ghi ra `processed_math/`.
+- **Chế độ demo:** khi chưa có run thật, mọi notebook vẫn chạy được. Dữ liệu giả lập (`demo_results_math/`, cho 4 kịch bản toán học) được ghi vào `processed_math_demo/`, với ngân sách tune rất nhỏ. Mọi đường dẫn demo đều nằm trong `.gitignore`.

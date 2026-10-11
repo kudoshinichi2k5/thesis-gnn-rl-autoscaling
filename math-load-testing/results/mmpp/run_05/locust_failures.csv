@@ -1,0 +1,9 @@
+Method,Name,Error,Occurrences
+GET,GET /product/[id],HTTPError('503 Server Error: Service Unavailable for url: GET /product/[id]'),2
+POST,POST /cart,HTTPError('503 Server Error: Service Unavailable for url: POST /cart'),1
+POST,POST /setCurrency,HTTPError('503 Server Error: Service Unavailable for url: POST /setCurrency'),1
+GET,GET /cart,HTTPError('503 Server Error: Service Unavailable for url: GET /cart'),2
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),6
+GET,GET /,"OSError(113, 'No route to host')",2
+GET,GET /,"ConnectionResetError(104, 'Connection reset by peer')",1
+GET,GET /,RemoteDisconnected('Remote end closed connection without response'),1

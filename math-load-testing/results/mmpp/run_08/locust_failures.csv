@@ -1,0 +1,4 @@
+Method,Name,Error,Occurrences
+POST,POST /cart,HTTPError('503 Server Error: Service Unavailable for url: POST /cart'),1
+GET,GET /,HTTPError('503 Server Error: Service Unavailable for url: GET /'),2
+GET,GET /,"OSError(113, 'No route to host')",2

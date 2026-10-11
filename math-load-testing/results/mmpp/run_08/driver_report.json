@@ -1,0 +1,15 @@
+{
+ "planned": 8466,
+ "started": 8466,
+ "dropped": 0,
+ "completed": 8367,
+ "failed": 0,
+ "max_in_flight": 222,
+ "expected_mean_rps": 28.903083700440533,
+ "designed_mean_rps": 28.563333333333333,
+ "dropped_ratio": 0.0,
+ "scenario": "mmpp",
+ "seed": 1008,
+ "duration": 1800,
+ "max_concurrent": 400
+}
