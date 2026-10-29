@@ -13,6 +13,7 @@ and read by compare_lstm_gatgru.ipynb:
 """
 import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -30,15 +31,92 @@ def load_predictions(path):
             'info': d['info'], 'meta': json.loads(str(d['meta']))}
 
 
+CONTRACT_FIELDS = ('dataset_fingerprint', 'split_fingerprint', 'run_keys', 'services',
+                   'node_features', 'targets', 'step_sec', 'horizon', 'warmup_drop')
+
+
+def _sample_index(artifact, name):
+    index = {tuple(row): i for i, row in enumerate(artifact['info'])}
+    if len(index) != len(artifact['info']):
+        raise ValueError(f'{name} has duplicate (run, scenario, target timestep) keys')
+    return index
+
+
+def _subset_samples(artifact, index, keys):
+    positions = np.asarray([index[key] for key in keys], dtype=int)
+    return {**artifact, 'Y_pred': artifact['Y_pred'][:, positions],
+            'Y_true': artifact['Y_true'][positions],
+            'Y_last': artifact['Y_last'][positions], 'info': artifact['info'][positions]}
+
+
+def align_many(artifacts):
+    """Align two or more named prediction artifacts to their common test windows."""
+    if len(artifacts) < 2:
+        raise ValueError('At least two prediction artifacts are required')
+    indices = {name: _sample_index(artifact, name) for name, artifact in artifacts.items()}
+    common = set.intersection(*(set(index) for index in indices.values()))
+    if not common:
+        raise ValueError('Prediction artifacts have no common test samples')
+    keys = sorted(common)
+    return {name: _subset_samples(artifacts[name], indices[name], keys) for name in artifacts}
+
+
 def align(a, b):
-    """Keep only windows present in both prediction sets (same run, same first target step)."""
-    ka = {tuple(r): i for i, r in enumerate(a['info'])}
-    kb = {tuple(r): i for i, r in enumerate(b['info'])}
-    common = sorted(set(ka) & set(kb))
-    ia, ib = np.array([ka[k] for k in common]), np.array([kb[k] for k in common])
-    sub = lambda d, idx: {**d, 'Y_pred': d['Y_pred'][:, idx], 'Y_true': d['Y_true'][idx],
-                          'Y_last': d['Y_last'][idx], 'info': d['info'][idx]}
-    return sub(a, ia), sub(b, ib)
+    """Backward-compatible two-artifact alignment."""
+    aligned = align_many({'left': a, 'right': b})
+    return aligned['left'], aligned['right']
+
+
+def assert_compatible_prediction_set(artifacts, require_same_raw_samples=True, atol=1e-6):
+    """Validate contracts and align any number of prediction artifacts."""
+    if len(artifacts) < 2:
+        raise ValueError('At least two prediction artifacts are required')
+    names = list(artifacts)
+    reference_name = names[0]
+    reference = artifacts[reference_name]
+    reference_contract = reference.get('meta', {}).get('data_contract', {})
+    reference_keys = set(map(tuple, reference['info']))
+    for name in names:
+        artifact = artifacts[name]
+        contract = artifact.get('meta', {}).get('data_contract', {})
+        missing = [field for field in CONTRACT_FIELDS
+                   if field not in reference_contract or field not in contract]
+        if missing:
+            raise ValueError(f'{name} is missing prediction contract fields: {missing}')
+        mismatch = [field for field in CONTRACT_FIELDS
+                    if reference_contract[field] != contract[field]]
+        if mismatch:
+            raise ValueError(
+                f'{reference_name}/{name} prediction contracts differ in: {mismatch}'
+            )
+        if require_same_raw_samples:
+            keys = set(map(tuple, artifact['info']))
+            if keys != reference_keys:
+                only_reference = len(reference_keys - keys)
+                only_current = len(keys - reference_keys)
+                raise ValueError(
+                    f'Test sample sets differ for {reference_name}/{name}: '
+                    f'only-reference={only_reference}, only-current={only_current}'
+                )
+
+    aligned = align_many(artifacts)
+    reference = aligned[reference_name]
+    for name, artifact in aligned.items():
+        if not np.array_equal(reference['info'], artifact['info']):
+            raise ValueError(f'Aligned sample identities differ for {reference_name}/{name}')
+        if not np.allclose(reference['Y_true'], artifact['Y_true'], atol=atol, rtol=0):
+            raise ValueError(f'Aligned ground truth differs for {reference_name}/{name}')
+        if not np.allclose(reference['Y_last'], artifact['Y_last'], atol=atol, rtol=0):
+            raise ValueError(f'Aligned last observations differ for {reference_name}/{name}')
+    return aligned
+
+
+def assert_compatible_predictions(a, b, require_same_raw_samples=True, atol=1e-6):
+    """Backward-compatible two-artifact contract validation and alignment."""
+    aligned = assert_compatible_prediction_set(
+        {'left': a, 'right': b}, require_same_raw_samples=require_same_raw_samples, atol=atol
+    )
+    return aligned['left'], aligned['right']
 
 
 def error_table(pred, true, targets):
@@ -99,3 +177,44 @@ def sign_test(wins, n):
     k = min(wins, n - wins)
     p = sum(math.comb(n, i) for i in range(k + 1)) / 2 ** n
     return min(1.0, 2 * p)
+
+
+def save_evaluation_artifacts(out_dir, model_name, d):
+    """Save numeric global/scenario/horizon test metrics instead of notebook-only displays."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    targets = d['meta']['targets']
+    seeds = d['meta']['seeds']
+    global_rows, scenario_rows, horizon_rows = [], [], []
+    for si, seed in enumerate(seeds):
+        tab = error_table(d['Y_pred'][si], d['Y_true'], targets)
+        for target, row in tab.iterrows():
+            global_rows.append({'model': model_name, 'seed': seed, 'target': target, **row.to_dict()})
+        for scenario in sorted(set(d['info'][:, 1])):
+            mask = d['info'][:, 1] == scenario
+            tab_sc = error_table(d['Y_pred'][si][mask], d['Y_true'][mask], targets)
+            for target, row in tab_sc.iterrows():
+                scenario_rows.append({'model': model_name, 'seed': seed, 'scenario': scenario,
+                                      'target': target, **row.to_dict()})
+        for k, target in enumerate(targets):
+            values = by_horizon(d['Y_pred'][si], d['Y_true'], k)
+            for h, value in enumerate(values, 1):
+                horizon_rows.append({'model': model_name, 'seed': seed, 'target': target,
+                                     'horizon_step': h, 'horizon_sec': h * d['meta']['data_contract']['step_sec'],
+                                     'MAE': float(value)})
+    global_df = pd.DataFrame(global_rows)
+    scenario_df = pd.DataFrame(scenario_rows)
+    horizon_df = pd.DataFrame(horizon_rows)
+    global_df.to_csv(out / f'{model_name}_test_metrics_by_seed.csv', index=False)
+    scenario_df.to_csv(out / f'{model_name}_test_metrics_by_scenario.csv', index=False)
+    horizon_df.to_csv(out / f'{model_name}_test_metrics_by_horizon.csv', index=False)
+    summary = global_df.groupby(['model', 'target']).agg(
+        MAE_mean=('MAE', 'mean'), MAE_std=('MAE', 'std'),
+        RMSE_mean=('RMSE', 'mean'), RMSE_std=('RMSE', 'std'),
+        under_MAE_mean=('under_MAE', 'mean'), over_MAE_mean=('over_MAE', 'mean'),
+    ).reset_index()
+    summary.to_csv(out / f'{model_name}_test_metrics_summary.csv', index=False)
+    (out / f'{model_name}_test_metrics_summary.json').write_text(
+        json.dumps(summary.to_dict('records'), indent=2, default=float)
+    )
+    return summary

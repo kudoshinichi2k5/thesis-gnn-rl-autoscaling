@@ -1,22 +1,22 @@
 # modeling-common: code dùng chung cho GAT-GRU và baseline LSTM
 
-Thư mục này chứa toàn bộ logic dữ liệu, chọn feature, huấn luyện, tìm siêu tham số và đánh giá dự báo. Cả [`math-load-testing/`](../math-load-testing/README.md) (GAT-GRU) và [`lstm-load-testing/`](../lstm-load-testing/README.md) (LSTM) đều import cùng module này và đọc cùng các run trong `math-load-testing/results/`. **Vì code là một, quy trình của hai mô hình giống hệt nhau.** Đây là điều kiện để kết luận "GAT-GRU tốt hơn hay kém hơn LSTM" là do **đồ thị**, chứ không phải do khác biệt trong xử lý dữ liệu hay công sức tune.
+Thư mục này chứa logic dữ liệu, chọn feature, huấn luyện, tìm siêu tham số và đánh giá dự báo dùng chung. Notebook GAT-GRU và LSTM trong [`notebooks/`](../notebooks/README.md) đều đọc các run trong [`dataset/raw/`](../dataset/README.md), dùng cùng frozen split và cùng metric implementation. Đóng góp của đồ thị chỉ được kết luận từ phép so sánh có cùng node-feature contract và protocol đánh giá; không suy ra từ mọi cặp artifact GAT-GRU/LSTM bất kỳ.
 
 ## Các module
 
 | File | Phụ thuộc | Nội dung |
 |---|---|---|
-| `forecast_data.py` | numpy, pandas | Hằng số (service, topology, feature, target, `HORIZON = 6`); đọc run; căn lưới 10s; tính feature; chia tập dùng chung (`splits_math.json`); chuẩn hóa (clip p99,9 → log1p → z-score fit trên train); cắt cửa sổ trượt; dữ liệu demo |
+| `forecast_data.py` | numpy, pandas | Hằng số (service, topology, feature, target, `HORIZON = 6`); đọc run; căn lưới 10s; tính feature; đọc split dùng chung (`dataset/splits.json`); chuẩn hóa (clip p99,9 → log1p → z-score fit trên train); cắt cửa sổ trượt; dữ liệu demo |
 | `feature_selection.py` | numpy, pandas | Bước 1 của chọn feature (lọc thống kê) và luật chọn theo permutation importance |
 | `forecast_torch.py` | PyTorch, Optuna | `LSTMForecaster`, `GATGRUForecaster` (GAT có feature cạnh, viết bằng PyTorch thuần); vòng huấn luyện; Optuna; permutation importance; huấn luyện lại nhiều seed; đo thời gian suy luận |
 | `forecast_metrics.py` | numpy, pandas | Quy ước file dự đoán; MAE/RMSE; sai số dự báo thiếu/thừa; theo khoảng dự báo, kịch bản, service; cửa sổ đầu spike; sign test theo run |
 | `requirements-ml.txt` | | Môi trường huấn luyện (máy cá nhân hoặc Colab), không cài lên `node-loadgen` |
-| `splits_math.json` | | **Sinh tự động** lần đầu chạy notebook tiền xử lý. Phân chia train/val/test theo run. **Commit file này** sau khi thu xong dữ liệu để mọi lần tune/đánh giá dùng cùng tập test |
+| `dataset/splits.json` | | Frozen mapping train/val/test theo run, dùng chung cho mọi model và được Git track |
 
 ## Quy trình chung (cho mỗi mô hình)
 
 ```text
-preprocess_<model>  ──▶ runs_raw.npz (mảng thô, mọi feature ứng viên) + splits_math.json (dùng chung)
+preprocess_<model>  ──▶ runs_raw.npz (mảng thô, mọi feature ứng viên) + dataset/splits.json (dùng chung)
         │
 feature_selection_<model>
         │  Bước 1  lọc thống kê (train): gần hằng số · độ liên quan với target tương lai · trùng lặp
@@ -27,7 +27,7 @@ train_<model>
         │  Optuna (TPE + MedianPruner) trên val: window, kiến trúc, lr, dropout, batch
         │  Huấn luyện lại cấu hình tốt nhất với 5 seed
         ▼  <model>_predictions_test.npz  (đánh giá test MỘT lần)
-compare_lstm_gatgru (lstm-load-testing/)
+compare_lstm_gatgru (notebooks/comparison/)
 ```
 
 ### Chọn feature: vì sao làm hai lớp
@@ -48,11 +48,13 @@ compare_lstm_gatgru (lstm-load-testing/)
 | Chung | window w ∈ {6, 12, 18}, dropout [0; 0,3], lr [1e-4; 3e-3] (log), batch {64, 128, 256} | như LSTM |
 | Kiến trúc | hidden {32, 64, 128}, số lớp {1, 2, 3}, `per_service` / `joint` | GAT hidden {16, 32, 64}, heads {1, 2, 4}, số lớp GAT {1, 2}, GRU hidden {32, 64, 128}, hướng cạnh {xuôi, ngược, cả hai}, dùng feature cạnh {có, không} |
 
-**Ngân sách cố định** trong `forecast_torch.BUDGET` (sửa ở đây, không sửa trong notebook):
+**Ngân sách mặc định** trong `forecast_torch.BUDGET` cho các notebook baseline:
 - 40 trial, TPE sampler với seed 42, MedianPruner (5 trial khởi động, 5 epoch warm-up);
 - tối đa 60 epoch, early stopping sau 8 epoch không cải thiện;
 - loss Huber trên target đã chuẩn hóa, AdamW, gradient clipping 1,0;
 - 5 seed cho đánh giá cuối.
+
+Notebook experiment có version có thể khai báo ngân sách riêng và phải lưu trong manifest. GAT-GRU v05 dùng 24 Optuna trials; cấu hình và runtime nằm trong `artifacts/gatgru/v05_selected_features_final/`.
 
 **Mục tiêu tối ưu:** MAE trên val ở thang đã chuẩn hóa, trung bình hai target. Chuẩn hóa giúp `rps_in` (hàng chục) và `cpu_cores` (phần trăm core) đóng góp cân bằng.
 
@@ -83,7 +85,7 @@ Một mô hình mới (ví dụ proactive baseline cho thực nghiệm cuối) c
 pip install -r modeling-common/requirements-ml.txt
 ```
 
-Notebook nằm trong `math-load-testing/` (GAT-GRU) và `lstm-load-testing/` (LSTM), và import module bằng `sys.path.insert(0, '../modeling-common')`.
+Notebook nằm trong `notebooks/gatgru/`, `notebooks/lstm/` và `notebooks/comparison/`; source cells xác định repo root rồi import `modeling-common/`.
 
-- **Dữ liệu:** mọi notebook đọc `math-load-testing/results/`, dùng `splits_math.json`, ghi ra `processed_math/`.
-- **Chế độ demo:** khi chưa có run thật, mọi notebook vẫn chạy được. Dữ liệu giả lập (`demo_results_math/`, cho 4 kịch bản toán học) được ghi vào `processed_math_demo/`, với ngân sách tune rất nhỏ. Mọi đường dẫn demo đều nằm trong `.gitignore`.
+- **Dữ liệu:** mọi notebook đọc `dataset/raw/` và dùng `dataset/splits.json`. Preprocessing cùng notebook baseline ghi cache/output dẫn xuất vào `dataset/processed/<model>/`; notebook experiment có version ghi checkpoint, prediction và metrics vào `artifacts/<model>/`.
+- **Raw data:** `dataset/raw/` được Git track và phải push; `dataset/processed/` bị ignore vì là dữ liệu dẫn xuất.

@@ -1,0 +1,17 @@
+pair,graph_model,node_only_model,run,scenario,target,mae_improvement,positive_means_gat_better
+gatgru_vs_gru,gatgru,gru,math-load-testing/mmpp/run_04,mmpp,cpu_cores,0.00027874633669853,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/mmpp/run_04,mmpp,rps_in,0.005495238304138006,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/nhpp/run_01,nhpp,cpu_cores,0.0005463453009724624,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/nhpp/run_01,nhpp,rps_in,0.020685565471649126,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/onoff/run_06,onoff,cpu_cores,0.0002809118479490287,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/onoff/run_06,onoff,rps_in,0.0010738372802734375,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/pareto/run_08,pareto,cpu_cores,0.0004635600373148925,True
+gatgru_vs_gru,gatgru,gru,math-load-testing/pareto/run_08,pareto,rps_in,0.019560623168945246,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/mmpp/run_04,mmpp,cpu_cores,0.000976700335741043,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/mmpp/run_04,mmpp,rps_in,-0.0056761026382445845,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/nhpp/run_01,nhpp,cpu_cores,0.00042660403996705974,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/nhpp/run_01,nhpp,rps_in,-0.04808317422866826,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/onoff/run_06,onoff,cpu_cores,0.00017805974930524757,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/onoff/run_06,onoff,rps_in,0.009786880016326882,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/pareto/run_08,pareto,cpu_cores,0.00026681870222091536,True
+gatlstm_vs_lstm,gatlstm,lstm,math-load-testing/pareto/run_08,pareto,rps_in,0.016585564613342263,True

@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "APPROVED",
+  "parent": "baseline-2026-10-14",
+  "dataset_fingerprint": "b18509670bb1ca10b356da33c2c282b169fdea1103ac45fdca6e788a097977d2",
+  "split_fingerprint": "05c2ba9d78432b338f736c3c16b186b9d17c5d4614ce16607c4f9511b9851d76",
+  "node_features": [
+    "rps_in",
+    "rps_in_delta",
+    "rps_per_replica",
+    "latency_p50_ms",
+    "latency_p95_ms",
+    "cpu_cores",
+    "mem_mib",
+    "net_rx_kBps",
+    "net_tx_kBps",
+    "replicas"
+  ],
+  "edge_features": [
+    "call_rate",
+    "call_ratio",
+    "edge_latency_p95_ms"
+  ],
+  "selection_evidence": {
+    "node_experiment": "artifacts/gatgru/v01_node_ablation",
+    "graph_experiment": "artifacts/gatgru/v02_graph_ablation",
+    "edge_experiment": "artifacts/gatgru/v03_edge_ablation",
+    "edge_controls": "artifacts/gatgru/v04_edge_controls"
+  },
+  "notes": "Node features approved from v01 validation-only finalist confirmation (5 seeds); cpu_util_request, cpu_throttle_ratio, and cpu_sidecar_cores were removed. The v03 validation-only finalist confirmation (5 seeds) selected call_rate, call_ratio, and edge_latency_p95_ms together as the candidate edge set for v04 negative controls. Edge selection remains provisional pending v04 review. No test metrics were used for these decisions."
+}

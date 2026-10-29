@@ -1,0 +1,5 @@
+pair,graph_model,node_only_model,target,mae_improvement_mean,mae_improvement_std_across_seeds,relative_mae_improvement_pct,positive_means_gat_better
+gatgru_vs_gru,gatgru,gru,cpu_cores,0.0003923908807337284,0.00011824370877780506,2.965628865670618,True
+gatgru_vs_gru,gatgru,gru,rps_in,0.011703816056251527,0.012819336324788629,1.1574216816950074,True
+gatlstm_vs_lstm,gatlstm,lstm,cpu_cores,0.00046204570680856704,0.0004204053777457434,3.5029853370301907,True
+gatlstm_vs_lstm,gatlstm,lstm,rps_in,-0.006846708059310913,0.01777397940592174,-0.6821127999906603,True

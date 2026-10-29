@@ -1,0 +1,20 @@
+{
+  "status": "EVALUATED",
+  "gat_path": "F:\\0. UIT\\KLTN\\thesis-gnn-rl-autoscaling\\math-load-testing\\experiments\\gatgru\\v05_selected_features_final\\gatgru_selected_predictions_test.npz",
+  "lstm_path": "F:\\0. UIT\\KLTN\\thesis-gnn-rl-autoscaling\\lstm-load-testing\\experiments\\lstm\\v01_shared_selected_features\\lstm_shared_predictions_test.npz",
+  "common_windows": 587,
+  "node_features": [
+    "rps_in",
+    "rps_in_delta",
+    "rps_per_replica",
+    "latency_p50_ms",
+    "latency_p95_ms",
+    "cpu_cores",
+    "mem_mib",
+    "net_rx_kBps",
+    "net_tx_kBps",
+    "replicas"
+  ],
+  "dataset_fingerprint": "b18509670bb1ca10b356da33c2c282b169fdea1103ac45fdca6e788a097977d2",
+  "split_fingerprint": "05c2ba9d78432b338f736c3c16b186b9d17c5d4614ce16607c4f9511b9851d76"
+}

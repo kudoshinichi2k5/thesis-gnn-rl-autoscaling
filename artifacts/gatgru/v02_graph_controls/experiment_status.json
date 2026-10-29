@@ -1,0 +1,24 @@
+{
+  "experiment_id": "v02_graph_controls",
+  "parent_version": "v02_graph_ablation",
+  "status": "EVALUATED",
+  "test_accessed": false,
+  "variants": [
+    "gru_node_only",
+    "static_gat_shuffled_topology",
+    "static_gat",
+    "dynamic_all_edges",
+    "static_gat_shuffled_topology_seed_101",
+    "static_gat_shuffled_topology_seed_202",
+    "static_gat_shuffled_topology_seed_303",
+    "static_gat_full_directed",
+    "static_gat_self_loops_only",
+    "static_gat_random_same_density"
+  ],
+  "source_sha256": {
+    "forecast_ablation.py": "4b7a12ded106c6e5a750c0494be1420e6e988a1297544e81ee22bf112a9baa82",
+    "forecast_torch.py": "d738a4cbd994580dbf00bce80432ec170b2e0353393edd3152d4497f3422eda2",
+    "forecast_data.py": "3ecd638da1cd508789a1f2ed8194d3f71acf819cbaada47a1471e4dc5b244175",
+    "forecast_metrics.py": "9aca3fe7f97c7b94b7f61091b275d326bdf72c8d1f0355e4226b194faaae4691"
+  }
+}

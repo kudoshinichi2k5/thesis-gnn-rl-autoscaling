@@ -1,0 +1,10 @@
+{
+  "window": 24,
+  "dropout": 0.10338721424396377,
+  "lr": 0.0011406112035118004,
+  "batch_size": 32,
+  "hidden": 128,
+  "layers": 2,
+  "mode": "joint",
+  "weight_decay": 6.4874484174886886e-06
+}

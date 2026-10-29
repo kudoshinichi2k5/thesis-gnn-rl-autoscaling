@@ -1,0 +1,13 @@
+{
+  "window": 18,
+  "dropout": 0.008967376666503827,
+  "lr": 0.0005352359452218873,
+  "batch_size": 32,
+  "gat_hidden": 32,
+  "heads": 4,
+  "gat_layers": 2,
+  "gru_hidden": 128,
+  "edge_direction": "both",
+  "use_edge_features": true,
+  "weight_decay": 1.8854677893580192e-06
+}

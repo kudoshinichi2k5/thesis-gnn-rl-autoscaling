@@ -1,0 +1,22 @@
+[
+  {
+    "model": "gatlstm_selected",
+    "target": "cpu_cores",
+    "MAE_mean": 0.012601329758763314,
+    "MAE_std": 0.00020124141048591377,
+    "RMSE_mean": 0.037187484193270275,
+    "RMSE_std": 0.0007635790760773405,
+    "under_MAE_mean": 0.006993417721241712,
+    "over_MAE_mean": 0.005607912130653858
+  },
+  {
+    "model": "gatlstm_selected",
+    "target": "rps_in",
+    "MAE_mean": 0.9982789397239685,
+    "MAE_std": 0.015468007086199755,
+    "RMSE_mean": 3.0640859060083856,
+    "RMSE_std": 0.055404722676950936,
+    "under_MAE_mean": 0.6039823412895202,
+    "over_MAE_mean": 0.39429655075073244
+  }
+]

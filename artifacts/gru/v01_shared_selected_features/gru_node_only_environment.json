@@ -1,0 +1,14 @@
+{
+  "python": "3.12.10 (tags/v3.12.10:0cc8128, Apr  8 2025, 12:21:36) [MSC v.1943 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "numpy": "2.5.4",
+  "pandas": "3.0.6",
+  "torch": "2.14.1+cpu",
+  "device": "cpu",
+  "source_sha256": {
+    "forecast_ablation.py": "e37a33cca81f81eaef2f6118e342eef949df96b6a3b788dd37fc9e27798f13d3",
+    "forecast_torch.py": "8130421930513c0967b0f7b760e70891b450353cd3792255c58d3a35f8820084",
+    "forecast_data.py": "3ecd638da1cd508789a1f2ed8194d3f71acf819cbaada47a1471e4dc5b244175",
+    "forecast_metrics.py": "1a0707b3d81f919f724cb49ed95d33f1e8e2d9ebfb2a8de46f296196668b53af"
+  }
+}

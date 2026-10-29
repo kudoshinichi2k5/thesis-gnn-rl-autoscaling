@@ -1,0 +1,16 @@
+{
+  "study_name": "lstm_node_only_b55e5fc117df47d5_fixed_arch",
+  "best_value": 0.1076088841884564,
+  "best_params": {
+    "window": 24,
+    "dropout": 0.13961092233707767,
+    "lr": 0.0011888166798423134,
+    "weight_decay": 0.00023718306892852383,
+    "batch_size": 64
+  },
+  "n_trials": 24,
+  "score_weights": {
+    "rps_in": 0.35,
+    "cpu_cores": 0.65
+  }
+}

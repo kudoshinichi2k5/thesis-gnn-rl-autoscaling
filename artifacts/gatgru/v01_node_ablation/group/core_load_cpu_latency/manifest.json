@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "experiment_id": "v01_node_group_ablation",
+  "parent_version": "baseline-2026-10-14",
+  "variant": "core_load_cpu_latency",
+  "model_kind": "gatgru",
+  "config": {
+    "window": 18,
+    "dropout": 0.055739332533562704,
+    "lr": 0.0015458145265688748,
+    "batch_size": 64,
+    "gat_hidden": 32,
+    "heads": 4,
+    "gat_layers": 2,
+    "gru_hidden": 128,
+    "edge_direction": "both",
+    "use_edge_features": true
+  },
+  "node_features": [
+    "rps_in",
+    "rps_in_delta",
+    "rps_per_replica",
+    "latency_p50_ms",
+    "latency_p95_ms",
+    "cpu_cores",
+    "cpu_util_request",
+    "cpu_throttle_ratio",
+    "cpu_sidecar_cores",
+    "replicas"
+  ],
+  "edge_features": [
+    "call_rate",
+    "call_ratio",
+    "edge_latency_p95_ms"
+  ],
+  "edge_control": "real",
+  "topology_control": "real",
+  "seeds": [
+    0
+  ],
+  "selection_split": "validation",
+  "test_accessed": false,
+  "score_weights": {
+    "rps_in": 0.5,
+    "cpu_cores": 0.5
+  },
+  "dataset_fingerprint": "b18509670bb1ca10b356da33c2c282b169fdea1103ac45fdca6e788a097977d2",
+  "split_fingerprint": "05c2ba9d78432b338f736c3c16b186b9d17c5d4614ce16607c4f9511b9851d76",
+  "data_contract": {
+    "schema_version": 1,
+    "dataset_fingerprint": "b18509670bb1ca10b356da33c2c282b169fdea1103ac45fdca6e788a097977d2",
+    "split_fingerprint": "05c2ba9d78432b338f736c3c16b186b9d17c5d4614ce16607c4f9511b9851d76",
+    "run_keys": [
+      "math-load-testing/mmpp/run_01",
+      "math-load-testing/mmpp/run_02",
+      "math-load-testing/mmpp/run_03",
+      "math-load-testing/mmpp/run_04",
+      "math-load-testing/mmpp/run_05",
+      "math-load-testing/mmpp/run_06",
+      "math-load-testing/mmpp/run_07",
+      "math-load-testing/mmpp/run_08",
+      "math-load-testing/nhpp/run_01",
+      "math-load-testing/nhpp/run_02",
+      "math-load-testing/nhpp/run_03",
+      "math-load-testing/nhpp/run_04",
+      "math-load-testing/nhpp/run_05",
+      "math-load-testing/nhpp/run_06",
+      "math-load-testing/nhpp/run_07",
+      "math-load-testing/nhpp/run_08",
+      "math-load-testing/onoff/run_01",
+      "math-load-testing/onoff/run_02",
+      "math-load-testing/onoff/run_03",
+      "math-load-testing/onoff/run_04",
+      "math-load-testing/onoff/run_05",
+      "math-load-testing/onoff/run_06",
+      "math-load-testing/onoff/run_07",
+      "math-load-testing/onoff/run_08",
+      "math-load-testing/pareto/run_01",
+      "math-load-testing/pareto/run_02",
+      "math-load-testing/pareto/run_03",
+      "math-load-testing/pareto/run_04",
+      "math-load-testing/pareto/run_05",
+      "math-load-testing/pareto/run_06",
+      "math-load-testing/pareto/run_07",
+      "math-load-testing/pareto/run_08"
+    ],
+    "services": [
+      "frontend",
+      "adservice",
+      "cartservice",
+      "checkoutservice",
+      "currencyservice",
+      "emailservice",
+      "paymentservice",
+      "productcatalogservice",
+      "recommendationservice",
+      "redis-cart",
+      "shippingservice"
+    ],
+    "node_features": [
+      "rps_in",
+      "rps_in_delta",
+      "rps_per_replica",
+      "latency_p50_ms",
+      "latency_p95_ms",
+      "error_rate",
+      "cpu_cores",
+      "cpu_util_request",
+      "cpu_throttle_ratio",
+      "cpu_sidecar_cores",
+      "mem_mib",
+      "net_rx_kBps",
+      "net_tx_kBps",
+      "replicas",
+      "restarts_delta"
+    ],
+    "targets": [
+      "rps_in",
+      "cpu_cores"
+    ],
+    "step_sec": 10,
+    "horizon": 6,
+    "warmup_drop": 6
+  },
+  "source_sha256": {
+    "forecast_ablation.py": "aeb971b3bf4ccd9a8288c5961d50837e6ad19b9e3574038651017e3e0b5ae456",
+    "forecast_torch.py": "d738a4cbd994580dbf00bce80432ec170b2e0353393edd3152d4497f3422eda2",
+    "forecast_data.py": "3ecd638da1cd508789a1f2ed8194d3f71acf819cbaada47a1471e4dc5b244175",
+    "forecast_metrics.py": "9aca3fe7f97c7b94b7f61091b275d326bdf72c8d1f0355e4226b194faaae4691"
+  }
+}
