@@ -1,0 +1,16 @@
+{
+  "primary_score": 0.11375338610297,
+  "cpu_weighted_diagnostic": 0.10663778861658191,
+  "pooled_scaled_mae": 0.11373072862625122,
+  "rps_in_scaled_mae_macro": 0.13747204439093028,
+  "rps_in_mae_macro": 1.0101551919655587,
+  "cpu_cores_scaled_mae_macro": 0.09003472781500971,
+  "cpu_cores_mae_macro": 0.01372821941940102,
+  "seed": 4,
+  "variant": "static_gat_shuffled_topology_seed_303",
+  "model_kind": "gatgru",
+  "train_seconds": 568.1744536999613,
+  "early_stop_val_mae": 0.11373072862625122,
+  "n_params": 121528,
+  "epochs_trained": 27
+}

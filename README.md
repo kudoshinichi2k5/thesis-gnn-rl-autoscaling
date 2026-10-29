@@ -63,7 +63,7 @@ Môi trường chạy trên **OpenStack (UIT NetChallenge)**, gồm 5 máy ảo 
  │             │ Envoy spans (Zipkin) ──────────────────────────────┐  │                  │
  │  ┌──────────┴───────────┐                              ┌──────────▼──┴──────────┐      │
  │  │ node-loadgen (1 vCPU)│ ── HTTP ─▶ frontend-external │ node-observability     │      │
- │  │ Locust + collector   │   (NodePort)                 │ (2 vCPU, Docker)       │      │
+ │  │ Locust + collector   │   (LoadBalancer/ServiceLB)   │ (4 vCPU, Docker)       │      │
  │  │ Floating IP          │ ── query_range / api/traces ▶│ Prometheus :9090       │      │
  │  └──────────────────────┘                              │ Grafana :3000          │      │
  │                                                        │ kube-state-metrics     │      │
@@ -77,10 +77,10 @@ Môi trường chạy trên **OpenStack (UIT NetChallenge)**, gồm 5 máy ảo 
 |---|---|---|---|
 | `node-app` | K3s control-plane | 2 vCPU, 20 GB | Label `node-role=control-plane`, taint `dedicated=control-plane:NoSchedule`; chạy istiod, các system pod và (đề xuất) controller autoscaling |
 | `node-app-worker-1`, `node-app-worker-2` | Application worker | 4 vCPU / 8 GB, 40 GB | Label `node-role=app-worker`; nhận toàn bộ pod Online Boutique (preferred anti-affinity giữa hai worker) |
-| `node-observability` | Giám sát, truy vết | 2 vCPU, 50 GB | **Ngoài cụm**, Docker Compose: Prometheus, Grafana, kube-state-metrics, Jaeger |
+| `node-observability` | Giám sát, truy vết | 4 vCPU, 50 GB | **Ngoài cụm**, Docker Compose: Prometheus, Grafana, kube-state-metrics, Jaeger |
 | `node-loadgen` | Sinh tải | 1 vCPU, 30 GB | **Ngoài cụm**: Locust và script xuất telemetry |
 
-**Nguyên tắc thiết kế:** giám sát và sinh tải đặt **ngoài cụm**, để chúng không tranh tài nguyên với ứng dụng đang được đo. Như vậy dữ liệu CPU/latency phản ánh đúng ứng dụng, và quyết định scale không bị nhiễu bởi chính công cụ đo.
+**Nguyên tắc thiết kế:** giám sát và sinh tải đặt **ngoài cụm** để giảm tranh chấp tài nguyên với ứng dụng đang được đo. Chất lượng telemetry vẫn được kiểm tra riêng trong từng run.
 
 Chi tiết: [`terraform-openstack/README.md`](terraform-openstack/README.md), [`cluster-setup/README.md`](cluster-setup/README.md).
 
@@ -96,11 +96,11 @@ Chi tiết: [`terraform-openstack/README.md`](terraform-openstack/README.md), [`
 | Mạng cụm | **Flannel** (VXLAN, mặc định của K3s) | Mạng pod giữa 3 node |
 | Đóng gói ứng dụng | **Helm** | Triển khai Online Boutique từ chart upstream (vendor theo commit), kèm patch resource, probe, anti-affinity tái lập được |
 | Ứng dụng benchmark | **Online Boutique** (Google `microservices-demo`) | 11 microservice (Go, C#, Node.js, Python, Java) gọi nhau qua gRPC: đồ thị phụ thuộc thực tế, nhiều ngôn ngữ, có chuỗi checkout sâu |
-| Service mesh | **Istio** `1.31.0` (profile minimal, Envoy sidecar) | Sidecar Envoy ghi **span cho mọi lời gọi** giữa service mà không phải sửa code ứng dụng. Đây là nguồn dữ liệu cạnh của đồ thị (ai gọi ai, bao nhiêu, mất bao lâu) |
+| Service mesh | **Istio** `1.31.0` (profile minimal, Envoy sidecar) | Envoy được cấu hình phát span cho lời gọi giữa service mà không sửa code ứng dụng; các span quan sát được là nguồn dữ liệu cạnh của đồ thị |
 | Thu metric | **Prometheus** `v2.54.1` | Scrape cAdvisor trên 3 kubelet và kube-state-metrics mỗi 10s; cung cấp `query_range` để xuất dữ liệu và (đề xuất) phục vụ pha Monitor của controller |
 | Metric container | **cAdvisor** (tích hợp kubelet) | CPU, memory, network, CPU throttling theo container/pod |
 | Metric trạng thái K8s | **kube-state-metrics** `v2.13.0` | Số replica, request/limit, restart: năng lực hiện tại và biến PPO điều khiển |
-| Truy vết phân tán | **Jaeger** `1.60.0` all-in-one, lưu trữ Badger | Nhận span Zipkin từ Envoy (sampling 100%); cung cấp RPS, latency, lỗi theo service và theo cạnh để xây Service Graph |
+| Truy vết phân tán | **Jaeger** `1.60.0` all-in-one, lưu trữ Badger | Nhận span Zipkin từ Envoy với sampling cấu hình 100%; cung cấp RPS, latency và lỗi quan sát được theo service/cạnh. Capture coverage được đánh giá riêng |
 | Trực quan hóa | **Grafana** `11.2.0` | Dashboard theo dõi trong lúc thu dữ liệu và thực nghiệm |
 | Sinh tải | **Locust** `2.31.8` | Mô phỏng người mua hàng. Driver gevent phát lại trace NHPP / MMPP / Bounded Pareto / ON/OFF (mô hình luồng đến mở) |
 | Xử lý dữ liệu | **Python**, NumPy, pandas, Matplotlib, Jupyter | Xuất telemetry, tiền xử lý, tạo tensor đồ thị cho GAT-GRU |
@@ -136,20 +136,25 @@ thesis-gnn-rl-autoscaling/
 │   ├── online-boutique/         # Helm chart (vendor) + values-override.yaml
 │   └── hpa/hpa-online-boutique.yaml  # HPA: CPU 70% container 'server', scale down sau 5 phút
 ├── monitoring-stack/            # docker-compose, prometheus.yml, Grafana provisioning
-├── math-load-testing/           # Dataset (tải theo mô hình toán: NHPP, MMPP, Bounded Pareto, ON/OFF) + pipeline GAT-GRU
+├── dataset/                     # Một dataset canonical dùng chung cho mọi mô hình
+│   ├── raw/{nhpp,mmpp,pareto,onoff}/run_XX/  # 448 raw files, bắt buộc push
+│   ├── processed/{gatgru,lstm}/ # cache sinh lại được, không push Git thường
+│   ├── splits.json              # frozen split train/val/test dùng chung
+│   └── DATASET.md, DATASET_GUIDE.md
+├── load-testing/                # Sinh tải và thu telemetry vào dataset/raw
 │   ├── arrival_models.py, scenarios/{nhpp,mmpp,pareto,onoff}.py
-│   ├── locustfile.py            #   driver luồng đến MỞ (phát lại trace)
-│   ├── run-scenario.sh, collect_metrics.py
-│   ├── analyze_workload.ipynb   #   kiểm chứng thống kê tải sinh ra
-│   ├── preprocess_gatgru.ipynb → feature_selection_gatgru.ipynb → train_gatgru.ipynb
-│   ├── README.md                #   các bước thu dataset
-│   └── DATASET_GUIDE.md         #   kiến thức về thu thập dataset
-├── lstm-load-testing/           # Baseline LSTM: pipeline + so sánh (đọc cùng dataset với GAT-GRU)
-│   ├── preprocess_lstm.ipynb → feature_selection_lstm.ipynb → train_lstm.ipynb
-│   └── compare_lstm_gatgru.ipynb
-└── modeling-common/             # Code dùng chung: dữ liệu, chọn feature, mô hình, Optuna, metric
-    ├── forecast_data.py, feature_selection.py, forecast_torch.py, forecast_metrics.py
-    └── splits_math.json         #   phân chia train/val/test dùng chung (sinh tự động)
+│   ├── locustfile.py, run-scenario.sh, collect_metrics.py
+│   └── README.md
+├── notebooks/                   # Chỉ chứa notebook, chia theo model/chức năng
+│   ├── dataset/                 # phân tích workload và chất lượng Jaeger
+│   ├── gatgru/, gatlstm/, lstm/, gru/
+│   └── comparison/
+├── artifacts/                   # Checkpoint, prediction, metric và tuning output
+│   ├── gatgru/, gatlstm/, lstm/, gru/
+│   └── comparison/
+├── configs/gatgru/              # Frozen feature contract và graph contract cho inference
+└── modeling-common/             # Code dùng chung: dữ liệu, mô hình, Optuna, metric
+    └── forecast_data.py, feature_selection.py, forecast_torch.py, forecast_metrics.py
 ```
 
 Thứ tự triển khai (chi tiết trong từng README):
@@ -170,13 +175,15 @@ bash cluster-setup/03-deploy-online-boutique.sh
 bash cluster-setup/00-generate-node-ips.sh      # cập nhật FRONTEND_URL sau khi có frontend-external
 bash cluster-setup/04-setup-monitoring.sh
 bash cluster-setup/05-setup-tracing.sh
-# 3. Thu dữ liệu (xem math-load-testing/README.md: đồng bộ math-load-testing/ lên ~/math-load-testing của node-loadgen)
+bash cluster-setup/06-setup-loadgen.sh
+# 3. Thu dữ liệu (xem load-testing/README.md)
 bash cluster-setup/07-setup-hpa.sh apply                    # dataset luôn được thu khi HPA bật
-#    trên node-loadgen:
-for s in nhpp mmpp pareto onoff; do bash math-load-testing/run-scenario.sh "$s" 8; done
+#    trên node-loadgen, chạy từng scenario và kiểm tra/reset Jaeger theo load-testing/README.md:
+bash load-testing/run-scenario.sh nhpp 8
 # 4. Mô hình (pip install -r modeling-common/requirements-ml.txt)
-#    math-load-testing/: preprocess_gatgru → feature_selection_gatgru → train_gatgru
-#    lstm-load-testing/: preprocess_lstm  → feature_selection_lstm  → train_lstm → compare_lstm_gatgru
+#    notebooks/gatgru/: preprocess → feature selection → train
+#    notebooks/lstm/:   preprocess → feature selection → train
+#    notebooks/comparison/: đánh giá các model trên cùng split
 ```
 
 ---
@@ -195,21 +202,21 @@ Tại mỗi bước thời gian $t$ (10 giây), hệ thống được biểu di�
 
 $$\hat{Y}_{t+1:t+h} = f_\theta\left(\mathcal{G}_{t-w+1}, \dots, \mathcal{G}_t\right), \qquad \hat{Y} \in \mathbb{R}^{h \times N \times K}$$
 
-- **Đầu vào:** chuỗi $w = 12$ snapshot (2 phút).
-- **Đầu ra:** dự báo $h = 6$ bước (60s) cho $K = 2$ target của mỗi service: `rps_in` (nhu cầu tải) và `cpu_cores` (nhu cầu tài nguyên). Horizon 60s bao được thời gian một pod mới sẵn sàng, nên quyết định scale có thể đi *trước* tải.
+- **Đầu vào:** chuỗi $w = 18$ snapshot, tương ứng 180 giây.
+- **Đầu ra:** dự báo $h = 6$ bước (60s) cho $K = 2$ target của mỗi service: `rps_in` quan sát từ Jaeger và `cpu_cores` quan sát từ Prometheus. Forecast là tín hiệu đầu vào cho RL; hiệu quả autoscaling phải được đánh giá riêng trong closed loop.
 - **Kiến trúc đề xuất:**
   1. **GAT** tại từng bước $\tau$: mỗi service tổng hợp thông tin từ các service láng giềng với trọng số attention $\alpha_{ij}$ học từ dữ liệu, có dùng đặc trưng cạnh $A_\tau$. Attention cho phép mô hình học *mức độ phụ thuộc động*: cạnh gọi nhiều hoặc chậm thì ảnh hưởng nhiều hơn.
   2. **GRU** chạy trên chuỗi embedding của từng nút (trọng số chia sẻ giữa các nút) để nắm xu hướng theo thời gian.
   3. **Đầu ra tuyến tính** cho $h \times K$ giá trị mỗi nút.
 - **Huấn luyện:** loss Huber trên target đã chuẩn hóa, AdamW, early stopping. **Đánh giá:** MAE, RMSE trên đơn vị gốc (trung bình ± độ lệch chuẩn qua 5 seed), so với baseline persistence ($\hat y_{t+k} = y_t$).
-- **Chọn feature** (cho mỗi mô hình, chỉ dùng train/val):
+- **Feature contract v05:** 10 node features và 3 edge features được đóng băng trong `configs/gatgru/feature_contract_v01.json`. Quá trình lựa chọn chỉ sử dụng train/validation:
   1. lọc thống kê: loại feature gần hằng số; đo độ liên quan bằng \|Spearman ρ\| với target tương lai; loại feature trùng lặp (\|ρ\| > 0,95);
   2. permutation importance trên val;
   3. huấn luyện lại để xác nhận tập feature đã chọn.
 
   Feature luôn giữ: `rps_in`, `cpu_cores`, `replicas`.
-- **Tìm siêu tham số:** Optuna 40 trial (window, kiến trúc, lr, dropout, batch; riêng GAT-GRU thêm hướng cạnh và việc có dùng feature cạnh hay không).
-- **Baseline LSTM** ([`lstm-load-testing/`](lstm-load-testing/README.md)): cùng run, cùng split, cùng feature nút ứng viên, cùng quy trình chọn feature và cùng ngân sách tune. Khác biệt duy nhất là **không có đồ thị**, nên chênh lệch kết quả đo đúng đóng góp của GAT. Code dùng chung nằm trong [`modeling-common/`](modeling-common/README.md).
+- **Tìm siêu tham số:** Optuna 24 trial cho cấu hình v05; kết quả tốt nhất dùng window 18, hai lớp GAT, bốn attention heads, GAT hidden 32 và GRU hidden 128.
+- **Baseline LSTM** ([`notebooks/lstm/`](notebooks/lstm/README.md)): artifact `v01_shared_selected_features` dùng cùng run, split, 10 node features và protocol đánh giá với GAT-GRU v05; khác biệt chính là không có graph input/message passing. Artifact `v02_node_only_selected_features` là baseline bổ sung với feature contract riêng. Code dùng chung nằm trong [`modeling-common/`](modeling-common/README.md).
 
 ### 5.3 PPO: quyết định số replica
 
@@ -226,21 +233,23 @@ $$\hat{Y}_{t+1:t+h} = f_\theta\left(\mathcal{G}_{t-w+1}, \dots, \mathcal{G}_t\ri
 
 ## 6. Bộ dataset
 
-Dataset nằm trong [`math-load-testing/`](math-load-testing/README.md), dùng chung cho GAT-GRU, LSTM và PPO. Tải được sinh theo **mô hình luồng đến mở**: một driver phát lại trace sinh trước từ mô hình toán, nên tải không tự giảm khi cụm nghẽn và vi phạm SLO được đo trung thực. Mỗi run có `designed_rate.csv` (nhu cầu thiết kế làm ground truth); các bộ sinh đã được kiểm định thống kê (KS test, phân phối lưu trú MMPP, hệ số Hurst). Mọi run được thu khi **HPA bật**. Kiến thức về thu dataset: [`math-load-testing/DATASET_GUIDE.md`](math-load-testing/DATASET_GUIDE.md).
+Dataset canonical nằm trong [`dataset/raw/`](dataset/), dùng chung cho GAT-GRU, LSTM và PPO. Tải được sinh bằng code trong [`load-testing/`](load-testing/README.md) theo **mô hình luồng đến mở**: driver phát lại trace sinh trước từ mô hình toán, nên lịch arrival không tự giảm khi hệ thống phản hồi chậm. Mỗi run có `designed_rate.csv` làm tham chiếu tải thiết kế; các bộ sinh đã được kiểm định thống kê (KS test, phân phối lưu trú MMPP, hệ số Hurst). Mọi run được thu khi **HPA bật**. Kiến thức về thu dataset: [`dataset/DATASET_GUIDE.md`](dataset/DATASET_GUIDE.md).
 
 | Khía cạnh | Mô tả |
 |---|---|
 | Kịch bản | **NHPP** (λ(t) hình sin chu kỳ 15 phút, 3–80 rps), **MMPP** (3 trạng thái Idle/Normal/High ≈ 9/21/90 rps, chuyển trạng thái ngẫu nhiên), **Bounded Pareto** (≈ 20 rps, số sản phẩm mỗi đơn đuôi nặng), **ON/OFF** (60 nguồn đuôi nặng, ≈ 27 rps, tự tương tự) |
-| Quy mô | 8 run × 30 phút cho mỗi kịch bản (seed = `SEED_BASE` + số run); 180 bước × 11 service mỗi run; khoảng 3.768 cửa sổ huấn luyện cho 4 kịch bản. HPA bật trong mọi run để PPO thấy được tác động của scaling |
-| Nguồn | Prometheus (cAdvisor + kube-state-metrics), Jaeger (span Envoy), driver (trace tải và báo cáo Locust, chỉ dùng để kiểm tra độ phủ và làm ground truth) |
-| Đặc trưng nút (15) | Tải: `rps_in`, `rps_in_delta`, `rps_per_replica`. Hiệu năng: `latency_p50/p95_ms`, `error_rate`. Tài nguyên: `cpu_cores`, `cpu_util_request`, `cpu_throttle_ratio`, `cpu_sidecar_cores`, `mem_mib`, `net_rx/tx_kBps`. Năng lực: `replicas`, `restarts_delta` |
-| Đặc trưng cạnh (4) | `call_rate`, `call_ratio` (fan-out), `edge_error_rate`, `edge_latency_p95_ms` |
+| Quy mô | 8 run × 30 phút cho mỗi kịch bản, tổng 32 run. Với contract v05: 3.661 train windows, 609 validation windows và 611 test windows. HPA bật trong mọi run |
+| Nguồn | Prometheus (cAdvisor + kube-state-metrics), Jaeger (span Envoy), driver (trace tải và báo cáo Locust, chỉ dùng để kiểm tra coverage và đối chiếu workload đầu vào) |
+| Telemetry nút ứng viên | 15 feature được tạo trong preprocessing để phân tích và ablation |
+| Input nút v05 (10) | `rps_in`, `rps_in_delta`, `rps_per_replica`, `latency_p50_ms`, `latency_p95_ms`, `cpu_cores`, `mem_mib`, `net_rx_kBps`, `net_tx_kBps`, `replicas` |
+| Input cạnh v05 (3) | `call_rate`, `call_ratio`, `edge_latency_p95_ms` |
 | Đặc trưng toàn đồ thị (5) | `e2e_rps`, `e2e_latency_p95_ms`, `e2e_error_rate`, `slo_violation`, `total_replicas` |
 | Target | `rps_in`, `cpu_cores` của từng service tại $t+1 \dots t+6$ |
 | Tiền xử lý | Căn lưới 10s, bỏ warm-up 60s, clip p99,9, `log1p`, z-score (fit trên train), cửa sổ trượt trong từng run, **chia train/val/test theo run** để tránh rò rỉ |
-| Đầu ra | `processed_math/gatgru_dataset.npz` (`X` [S, 12, 11, 15], `E` [S, 12, M, 4], `G` [S, 12, 5], `Y` [S, 6, 11, 2], `edge_index`), `metadata.json` (scaler, tên feature), `timeseries_raw.csv` (cho môi trường PPO) |
+| Cache preprocessing | `dataset/processed/gatgru/` chứa `runs_raw.npz`, `gatgru_dataset.npz`, `metadata.json` và `timeseries_raw.csv`; đây là dữ liệu dẫn xuất và bị Git ignore |
+| Artifact v05 | `artifacts/gatgru/v05_selected_features_final/` chứa năm checkpoint, prediction test, metrics và handoff manifest. Input inference là `X [B,18,11,10]`, `E [B,18,15,3]`; output là `[B,6,11,2]` |
 
-Nguyên tắc quan trọng: **chỉ dùng đặc trưng quan sát được khi triển khai thật**. Thông tin của driver (trace tải, tải thiết kế) không được đưa vào mô hình.
+Nguyên tắc quan trọng: **chỉ dùng đặc trưng quan sát được khi triển khai thật**. Thông tin của driver (trace tải, tải thiết kế) không được đưa vào mô hình. `rps_in` lấy từ Jaeger phản ánh tải quan sát được từ trace, không phải toàn bộ tải thực khi coverage chưa đầy đủ.
 
 ---
 
@@ -280,7 +289,7 @@ flowchart LR
 | Pha | Thành phần trong repo | Đã có / đề xuất |
 |---|---|---|
 | **Monitor** | Prometheus (cAdvisor, KSM), Jaeger (span Envoy), logic truy vấn của `collect_metrics.py` | Đã có. Controller tái sử dụng logic truy vấn này cho cửa sổ 10s gần nhất |
-| **Analyze** | Dựng snapshot đồ thị bằng **đúng** phép biến đổi trong `preprocess_gatgru.ipynb`, rồi suy luận GAT-GRU | Đề xuất |
+| **Analyze** | Dựng snapshot đồ thị theo `notebooks/gatgru/preprocess_gatgru.ipynb` và các contract trong `configs/gatgru/`, rồi suy luận GAT-GRU | Đề xuất |
 | **Plan** | PPO policy và lớp an toàn | Đề xuất |
 | **Execute** | Gọi `PATCH /apis/apps/v1/namespaces/online-boutique/deployments/<svc>/scale` | Đề xuất |
 | **Knowledge** | Xem 7.2 | Đề xuất |
@@ -291,16 +300,16 @@ Pha K là **bộ nhớ dùng chung** của vòng lặp: các pha khác đọc ng
 
 | Thành phần | Nội dung | Hiện thực đề xuất | Ai đọc / ghi |
 |---|---|---|---|
-| **Service Graph** | Topology tĩnh, cạnh phát hiện từ trace, trọng số `call_ratio` trung bình, attention gần nhất của GAT | File `knowledge/service_graph.json` (từ `metadata.json` của dataset), cập nhật định kỳ từ Jaeger | A đọc (edge_index); A ghi attention để giải thích quyết định |
-| **Model Registry** | Trọng số GAT-GRU và PPO theo phiên bản, kèm `metadata.json` (scaler, tên feature, w, h) và chỉ số MAE/RMSE lúc huấn luyện | Thư mục versioned trên PVC (hoặc MinIO trên node-observability): `models/v{n}/{gatgru.onnx, ppo.onnx, metadata.json}` | A, P đọc phiên bản đang `active` |
+| **Service Graph** | Topology tĩnh, service/edge ordering và graph semantics | Khởi tạo từ `configs/gatgru/graph_metadata.json`; telemetry cạnh được cập nhật từ Jaeger | A đọc topology và tạo edge tensor đúng contract |
+| **Model Registry** | Checkpoint GAT-GRU/PPO theo phiên bản, feature/graph contract, runtime metadata và checksum | Thư mục versioned trên PVC hoặc object storage; package GAT-GRU lấy từ `artifacts/gatgru/v05_selected_features_final/` và `configs/gatgru/` | A, P đọc phiên bản đang `active` |
 | **SLO & Policy** | Ngưỡng SLO (p95 300ms, lỗi 1%), giới hạn replica, danh sách service được scale, cooldown, hệ số reward, chế độ (`gatgru-ppo`, `predictive`, `shadow`) | ConfigMap `autoscaler-policy` (giai đoạn sau có thể nâng lên CRD `AutoscalingPolicy`) | P, E đọc; người vận hành sửa |
 | **Decision Log** | Mỗi chu kỳ: state, dự báo, action, action sau lớp an toàn, kết quả thực tế ở các bước sau | Controller expose `/metrics` cho Prometheus (`autoscaler_forecast`, `autoscaler_action`, `autoscaler_reward`, `autoscaler_forecast_error`), cộng file JSONL trên PVC | E ghi; dùng để đánh giá và huấn luyện lại |
-| **Feature Store** | Bộ đệm trượt `w` snapshot gần nhất, đã chuẩn hóa | Bộ nhớ trong controller, khôi phục từ Prometheus `query_range` khi restart | M ghi, A đọc |
+| **Feature Store** | Bộ đệm 18 snapshot gần nhất | Bộ nhớ trong controller, khôi phục từ Prometheus/Jaeger khi restart; scaler do inference wrapper đọc từ checkpoint | M ghi, A đọc |
 
 **Vòng phản hồi của Knowledge.** Phần này giúp K không chỉ là nơi lưu trữ:
 1. **Giám sát độ chính xác online:** controller so sánh dự báo $\hat y_{t+k}$ với giá trị thực khi thời điểm $t+k$ đến, rồi xuất `autoscaler_forecast_error` (MAE trượt 10 phút).
 2. **Phát hiện drift và fallback:** nếu MAE online vượt $2\times$ MAE lúc kiểm thử offline trong một khoảng thời gian định trước, hoặc mất dữ liệu Monitor, controller chuyển sang **chế độ an toàn** (rule giống HPA: CPU 70%) và gắn cờ cần huấn luyện lại.
-3. **Huấn luyện lại offline** (phù hợp giới hạn "PPO huấn luyện offline" của đề cương): Decision Log và telemetry được xuất thành run mới theo đúng định dạng `math-load-testing/results/`, chạy lại notebook, huấn luyện, kiểm thử, rồi đăng ký phiên bản mới vào Model Registry.
+3. **Huấn luyện lại offline** (phù hợp giới hạn "PPO huấn luyện offline" của đề cương): Decision Log và telemetry được xuất thành run mới theo đúng định dạng `dataset/raw/`, chạy lại notebook, huấn luyện, kiểm thử, rồi đăng ký phiên bản mới vào Model Registry.
 4. **Triển khai có kiểm soát:** phiên bản mới chạy ở chế độ **shadow** (dự báo và quyết định nhưng không thực thi, chỉ ghi log) cho đến khi chỉ số trong Decision Log đạt yêu cầu, sau đó mới chuyển sang `active`.
 
 ---
@@ -311,14 +320,15 @@ Pha K là **bộ nhớ dùng chung** của vòng lặp: các pha khác đọc ng
 
 ```text
 autoscaler/                         (đề xuất thư mục mới)
-├── Dockerfile                      # python:3.11-slim + onnxruntime + kubernetes + requests
+├── Dockerfile                      # Python 3.12 + PyTorch + kubernetes + requests
 ├── controller/
-│   ├── monitor.py                  # tái sử dụng truy vấn của math-load-testing/collect_metrics.py (cửa sổ 10s cuối)
-│   ├── features.py                 # cùng phép biến đổi với preprocess_gatgru.ipynb, đọc scaler từ metadata.json
-│   ├── analyze.py                  # GAT-GRU (ONNX) -> dự báo t+1..t+6
-│   ├── plan.py                     # PPO (ONNX) + lớp an toàn
+│   ├── monitor.py                  # tái sử dụng truy vấn của load-testing/collect_metrics.py (cửa sổ 10s cuối)
+│   ├── features.py                 # tạo X/E đúng feature và graph contract
+│   ├── analyze.py                  # gọi modeling-common/gatgru_inference.py
+│   ├── plan.py                     # PPO + lớp an toàn
 │   ├── execute.py                  # PATCH deployments/scale
 │   └── main.py                     # vòng lặp MAPE-K, /metrics, /healthz
+├── models/                          # checkpoint, metadata, feature/graph contract, checksum
 └── deploy/
     ├── namespace.yaml              # namespace autoscaler (KHÔNG inject Istio)
     ├── rbac.yaml                   # ServiceAccount + Role: get/list deployments, get/patch deployments/scale
@@ -328,7 +338,7 @@ autoscaler/                         (đề xuất thư mục mới)
 ```
 
 Lý do của các lựa chọn:
-- **Xuất mô hình sang ONNX/TorchScript:** image controller không cần PyTorch hay PyG (nhẹ hơn vài GB). Suy luận GAT-GRU cỡ nhỏ cho 11 nút chỉ mất vài ms trên CPU.
+- **Định dạng triển khai hiện tại:** dùng checkpoint PyTorch cùng `modeling-common/gatgru_inference.py`. Chỉ chuyển sang ONNX/TorchScript sau khi có export và parity test riêng.
 - **Đặt controller trên `node-app` (control-plane)**, có toleration cho taint `dedicated=control-plane:NoSchedule`, giống cách istiod đang được pin. Controller không chiếm CPU của worker đang chạy ứng dụng, nên số liệu thực nghiệm không bị nhiễu.
 - **Namespace riêng, không inject sidecar:** controller không phải là một phần của đồ thị dịch vụ đang được đo.
 - **RBAC tối thiểu:** chỉ được scale Deployment trong `online-boutique`.
@@ -360,9 +370,9 @@ Lý do của các lựa chọn:
 
 | Yếu tố | Thiết lập |
 |---|---|
-| **Phương pháp so sánh** | (1) **HPA** (`k8s-manifests/hpa/hpa-online-boutique.yaml`): CPU 70% của container ứng dụng, min 1, max 4, scale up ngay, scale down sau 5 phút ổn định. (2) **Proactive baseline**: LSTM không có đồ thị (mô hình đã huấn luyện trong `lstm-load-testing/`) dự báo CPU, rồi áp quy tắc $\text{replica} = \lceil \hat{\text{cpu}}_{t+h} / (0{,}7 \cdot \text{request}) \rceil$. (3) **GAT-GRU + PPO** |
+| **Phương pháp so sánh** | (1) **HPA** (`k8s-manifests/hpa/hpa-online-boutique.yaml`): CPU 70% của container ứng dụng, min 1, max 4, scale up ngay, scale down sau 5 phút ổn định. (2) **Proactive baseline**: LSTM không có đồ thị (artifact trong `artifacts/lstm/`) dự báo CPU, rồi áp quy tắc $\text{replica} = \lceil \hat{\text{cpu}}_{t+h} / (0{,}7 \cdot \text{request}) \rceil$. (3) **GAT-GRU + PPO** |
 | **Service được scale** | Giống nhau cho cả 3 phương pháp: `frontend`, `cartservice`, `checkoutservice`, `currencyservice`, `productcatalogservice`, `recommendationservice` (các service còn lại cố định 1 replica) |
-| **Kịch bản tải** | 4 kịch bản của `math-load-testing/` (NHPP, MMPP, Pareto, ON/OFF), mỗi run 30 phút |
+| **Kịch bản tải** | 4 kịch bản trong `dataset/raw/` (NHPP, MMPP, Pareto, ON/OFF), mỗi run 30 phút |
 | **Lặp lại** | 3 run cho mỗi (phương pháp × kịch bản), tổng $3 \times 4 \times 3 = 36$ run, khoảng 25–30 giờ (gồm thời gian chờ scale về 1 replica giữa các run) |
 | **So sánh cặp** | Cùng chuỗi tải cho cả 3 phương pháp: mỗi phương pháp ghi vào `RESULTS_DIR` riêng với cùng `SEED_BASE`, nên run thứ *k* của mọi phương pháp có cùng seed và cùng trace. Mọi khác biệt khi đó đến từ autoscaler, không đến từ tải. Với mô hình mở, tải không tự giảm khi autoscaler phản ứng chậm, nên vi phạm SLO được đo trung thực hơn |
 | **Thứ tự** | Xen kẽ phương pháp (HPA → baseline → GAT-GRU+PPO → HPA → …) để tránh thiên lệch do trạng thái hạ tầng thay đổi theo thời gian |
@@ -384,8 +394,8 @@ bash cluster-setup/07-setup-hpa.sh apply
 #   kubectl -n autoscaler scale deployment gnn-rl-autoscaler --replicas=1
 
 # 2. Chạy tải và thu telemetry (trên node-loadgen). Mỗi phương pháp một RESULTS_DIR riêng, cùng SEED_BASE.
-RESULTS_DIR=~/math-load-testing/results-eval/hpa SEED_BASE=2000 COOLDOWN_SEC=0 \
-  bash math-load-testing/run-scenario.sh mmpp 1
+RESULTS_DIR=~/dataset/raw-eval/hpa SEED_BASE=2000 COOLDOWN_SEC=0 \
+  bash load-testing/run-scenario.sh mmpp 1
 ```
 
 `run-scenario.sh` và `collect_metrics.py` đã xuất đủ dữ liệu để tính các chỉ số bên dưới: replica theo thời gian (KSM), CPU (cAdvisor), latency và lỗi (Jaeger), p95/p99 phía client (Locust). Đề xuất thêm script `experiments/run-comparison.sh` để lặp qua (phương pháp × kịch bản × seed), và notebook `experiments/evaluate.ipynb` để tính chỉ số.
@@ -414,7 +424,7 @@ Ký hiệu: $\Delta t = 10s$ là một bước; $r_{i,t}$ là replica của serv
   - Chuỗi thời gian RPS, replica, p95 chồng 3 phương pháp trên cùng một run MMPP: thấy rõ proactive scale *trước* đỉnh tải.
   - Biểu đồ đánh đổi **chi phí (replica-giờ) – SLO violation**: mỗi điểm là một (phương pháp × kịch bản).
   - Boxplot scaling frequency và oscillation cho kịch bản ON/OFF.
-- **Kỳ vọng** (giả thuyết cần kiểm chứng): GAT-GRU+PPO giảm SLO violation và thời gian phản ứng ở MMPP, giảm oscillation ở ON/OFF so với HPA, với chi phí tài nguyên tương đương hoặc thấp hơn. Proactive baseline (không có đồ thị) nằm giữa hai phương pháp, qua đó cho thấy đóng góp riêng của thông tin đồ thị.
+- **Giả thuyết cần kiểm chứng:** GAT-GRU+PPO có thể giảm SLO violation, thời gian phản ứng hoặc oscillation so với HPA mà không tăng chi phí tài nguyên quá mức. So sánh với proactive baseline không có đồ thị được dùng để định lượng liệu graph input có tạo khác biệt trong closed loop hay không.
 
 ---
 

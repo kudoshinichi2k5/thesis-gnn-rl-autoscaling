@@ -9,6 +9,7 @@ is what guarantees that.
 No deep-learning dependency here (numpy/pandas only).
 """
 import json
+import hashlib
 import math
 from pathlib import Path
 
@@ -59,6 +60,87 @@ NF, EF, GF = list(NODE_FEATURES), list(EDGE_FEATURES), list(GRAPH_FEATURES)
 TARGETS = ['rps_in', 'cpu_cores']
 # Never removed by feature selection: autoregressive targets + the variable PPO controls.
 FORCED_FEATURES = ['rps_in', 'cpu_cores', 'replicas']
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with Path(path).open('rb') as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _raw_file_hashes(run):
+    if run.get('raw_file_hashes'):
+        return run['raw_file_hashes']
+    if run.get('_raw_file_hashes'):
+        return run['_raw_file_hashes']
+    directory = run.get('dir')
+    if directory is None:
+        return None
+    names = ('meta.json', 'node_metrics.csv', 'service_metrics.csv', 'edge_metrics.csv')
+    hashes = {name: _sha256_file(Path(directory) / name)
+              for name in names if (Path(directory) / name).exists()}
+    run['_raw_file_hashes'] = hashes
+    return hashes
+
+
+def run_manifest(runs):
+    """Stable, JSON-serialisable identity of the raw runs used by a model pipeline.
+
+    The manifest contains acquisition identity/interval metadata and SHA-256 hashes
+    of the raw model inputs. It catches replaced, added, removed or renamed runs
+    before an old frozen split can silently be reused.
+    """
+    rows = []
+    for r in sorted(runs, key=lambda x: x['key']):
+        m = r.get('meta', {})
+        rows.append({
+            'key': r['key'],
+            'scenario': r.get('scenario', m.get('scenario')),
+            'run_id': r.get('run_id', m.get('run_id')),
+            'source_run_id': r.get('source_run_id', m.get('run_id')),
+            'start': m.get('start', r.get('start')),
+            'end': m.get('end', r.get('end')),
+            'duration_sec': m.get('duration_sec', r.get('duration_sec')),
+            'step_sec': m.get('step_sec', r.get('step_sec', STEP_SEC)),
+            'seed': m.get('seed', r.get('seed')),
+            'autoscaler': m.get('autoscaler', r.get('autoscaler', 'none')),
+            'raw_file_hashes': _raw_file_hashes(r),
+        })
+    return rows
+
+
+def manifest_fingerprint(manifest):
+    payload = json.dumps(manifest, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+def data_contract(runs, splits, node_features=None, targets=None):
+    """Contract shared by LSTM/GRU/GAT-GRU preprocessing and prediction artifacts."""
+    manifest = run_manifest(runs)
+    return {
+        'schema_version': 1,
+        'dataset_fingerprint': manifest_fingerprint(manifest),
+        'split_fingerprint': split_fingerprint(splits),
+        'run_keys': [r['key'] for r in manifest],
+        'services': list(SERVICES),
+        'node_features': list(node_features or NF),
+        'targets': list(targets or TARGETS),
+        'step_sec': STEP_SEC,
+        'horizon': HORIZON,
+        'warmup_drop': WARMUP_DROP,
+    }
+
+
+def assert_contract_equal(left, right, fields=None, context='data contracts'):
+    fields = fields or ('dataset_fingerprint', 'split_fingerprint', 'run_keys', 'services',
+                        'node_features', 'targets', 'step_sec', 'horizon', 'warmup_drop')
+    mismatches = [f for f in fields if left.get(f) != right.get(f)]
+    if mismatches:
+        details = {f: {'left': left.get(f), 'right': right.get(f)} for f in mismatches}
+        raise ValueError(f'{context} do not match: {json.dumps(details, default=str)}')
+    return True
 
 
 # --------------------------------------------------------------------------- demo data
@@ -215,13 +297,19 @@ def load_runs(sources):
         for meta_path in sorted(Path(root).glob('*/run_*/meta.json')):
             d = meta_path.parent
             meta = json.loads(meta_path.read_text())
+            # The directory name is the canonical dataset identity used by quality
+            # artifacts and frozen splits. Keep a differing historical meta.run_id
+            # as provenance, but never let it silently rename a run key.
+            run_id = d.name
+            source_run_id = meta.get('run_id', run_id)
             loc = _read(d / 'locust_stats_history.csv')
             if not loc.empty and 'Name' in loc:
                 loc = loc[loc['Name'] == 'Aggregated']
             report = d / 'collect_report.json'
             runs.append({
-                'key': f"{label}/{meta['scenario']}/{meta.get('run_id', d.name)}",
-                'source': label, 'scenario': meta['scenario'], 'run_id': meta.get('run_id', d.name),
+                'key': f"{label}/{meta['scenario']}/{run_id}",
+                'source': label, 'scenario': meta['scenario'], 'run_id': run_id,
+                'source_run_id': source_run_id,
                 'dir': d, 'meta': meta, 'node': _read(d / 'node_metrics.csv'),
                 'svc': _read(d / 'service_metrics.csv'), 'edge': _read(d / 'edge_metrics.csv'),
                 'locust': loc, 'report': json.loads(report.read_text()) if report.exists() else {},
@@ -293,7 +381,9 @@ def build_run_arrays(r, edges, correct_coverage=False):
         if c not in node:
             node[c] = np.nan
     gauges = ['mem_bytes', 'cpu_request_cores', 'cpu_limit_cores', 'restarts_total', 'replicas', 'replicas_desired']
-    node[gauges] = node[gauges].groupby(level='service').ffill(limit=3).groupby(level='service').bfill(limit=3)
+    # Causal imputation only: a value at t may depend on observations at <= t,
+    # never on a later sample. Initial/long gaps use the explicit defaults below.
+    node[gauges] = node[gauges].groupby(level='service').ffill(limit=3)
     node = node.fillna({'replicas': 1}).fillna(0.0)
 
     svc_cols = ['request_count', 'error_count', 'latency_p50_ms', 'latency_p95_ms']
@@ -385,7 +475,50 @@ def create_splits(runs, mode='by_run', frac=None, test_scenarios=('spike',), see
                 labels[keys[i]] = 'test' if j < n_test else 'val' if j < n_test + n_val else 'train'
         else:
             labels.update({k: 'time' for k in keys})
-    return {'mode': mode, 'seed': seed, 'frac': frac, 'test_scenarios': list(test_scenarios), 'runs': labels}
+    manifest = run_manifest(runs)
+    return {'schema_version': 1, 'mode': mode, 'seed': seed, 'frac': frac,
+            'test_scenarios': list(test_scenarios), 'runs': labels,
+            'run_keys': [r['key'] for r in manifest],
+            'dataset_fingerprint': manifest_fingerprint(manifest)}
+
+
+def split_fingerprint(splits):
+    """Hash only the frozen key-to-split mapping and split policy."""
+    payload = {
+        'mode': splits.get('mode'),
+        'seed': splits.get('seed'),
+        'frac': splits.get('frac'),
+        'runs': dict(sorted(splits.get('runs', {}).items())),
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+    return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+
+
+def validate_splits(splits, runs):
+    """Fail fast when a frozen split no longer describes exactly the raw dataset."""
+    manifest = run_manifest(runs)
+    current_keys = [r['key'] for r in manifest]
+    split_keys = sorted(splits.get('runs', {}))
+    raw_only = sorted(set(current_keys) - set(split_keys))
+    split_only = sorted(set(split_keys) - set(current_keys))
+    if raw_only or split_only:
+        raise ValueError(
+            'Frozen split does not match raw runs. '
+            f'raw-only={raw_only}; split-only={split_only}. '
+            'Rebuild deliberately before feature selection/tuning, then freeze it again.'
+        )
+    expected_keys = splits.get('run_keys')
+    if expected_keys is not None and sorted(expected_keys) != current_keys:
+        raise ValueError('Frozen split run_keys do not match the current raw runs')
+    current_fp = manifest_fingerprint(manifest)
+    expected_fp = splits.get('dataset_fingerprint')
+    if expected_fp is not None and expected_fp != current_fp:
+        raise ValueError(
+            f'Raw dataset fingerprint changed: split={expected_fp}, current={current_fp}. '
+            'Do not reuse results or a tuned study across this change.'
+        )
+    return {'manifest': manifest, 'dataset_fingerprint': current_fp,
+            'split_fingerprint': split_fingerprint(splits)}
 
 
 def load_or_create_splits(path, runs, rebuild=False, **kw):
@@ -393,12 +526,10 @@ def load_or_create_splits(path, runs, rebuild=False, **kw):
     path = Path(path)
     if path.exists() and not rebuild:
         splits = json.loads(path.read_text())
-        missing = [r['key'] for r in runs if r['key'] not in splits['runs']]
-        if missing:
-            print(f'⚠️ {len(missing)} run chưa có trong {path.name} nên bị bỏ qua: {missing[:5]}... '
-                  f'(đặt REBUILD_SPLITS=True để chia lại; chỉ làm trước khi tune/đánh giá)')
+        validate_splits(splits, runs)
         return splits
     splits = create_splits(runs, **kw)
+    validate_splits(splits, runs)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(splits, indent=2))
     print(f'Đã tạo {path}')
@@ -416,10 +547,21 @@ def save_runs_npz(path, runs, edges, extra_meta=None):
     for i, r in enumerate(runs):
         arrays[f'X_{i}'], arrays[f'E_{i}'], arrays[f'G_{i}'] = r['X'], r['E'], r['G']
         index.append({'key': r['key'], 'scenario': r['scenario'],
-                      'autoscaler': r['meta'].get('autoscaler', 'none'), 'start': r['meta']['start']})
+                      'run_id': r.get('run_id', r['meta'].get('run_id')),
+                      'source_run_id': r.get('source_run_id', r['meta'].get('run_id')),
+                      'autoscaler': r['meta'].get('autoscaler', 'none'),
+                      'start': r['meta']['start'], 'end': r['meta'].get('end'),
+                      'duration_sec': r['meta'].get('duration_sec'),
+                      'step_sec': r['meta'].get('step_sec', STEP_SEC),
+                      'seed': r['meta'].get('seed'),
+                      'raw_file_hashes': _raw_file_hashes(r)})
+    extra_meta = extra_meta or {}
+    contract = (data_contract(runs, extra_meta['splits'], NF, TARGETS)
+                if 'splits' in extra_meta else None)
     meta = {'services': SERVICES, 'edges': edges, 'node_features': NF, 'edge_features': EF,
             'graph_features': GF, 'targets': TARGETS, 'forced_features': FORCED_FEATURES,
-            'step_sec': STEP_SEC, 'warmup_drop': WARMUP_DROP, 'runs': index, **(extra_meta or {})}
+            'step_sec': STEP_SEC, 'warmup_drop': WARMUP_DROP, 'runs': index,
+            **({'data_contract': contract} if contract else {}), **extra_meta}
     arrays['meta'] = np.array(json.dumps(meta))
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(path, **arrays)

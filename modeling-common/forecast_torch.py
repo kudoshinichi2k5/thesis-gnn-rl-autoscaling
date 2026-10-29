@@ -12,10 +12,14 @@ Fairness rules enforced here (both models go through the same functions):
 Tensor layout: X [B, W, N, F], E [B, W, M, Fe] (GAT-GRU only), Y [B, H, N, K].
 """
 import copy
+import hashlib
 import json
 import math
+import platform
 import random
+import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -26,6 +30,7 @@ import torch.nn.functional as F
 import forecast_data as fd
 
 DEFAULTS = {'max_epochs': 60, 'patience': 8, 'weight_decay': 1e-4, 'grad_clip': 1.0, 'emb_dim': 4}
+GRAPH_MODEL_KINDS = frozenset({'gatgru', 'gatlstm'})
 # Identical search/evaluation budget for every model (change here, never per notebook).
 BUDGET = {'n_trials': 40, 'search_seed': 42, 'final_seeds': (0, 1, 2, 3, 4), 'importance_repeats': 5}
 DEMO_BUDGET = {'n_trials': 3, 'search_seed': 42, 'final_seeds': (0, 1), 'importance_repeats': 2, 'max_epochs': 3}
@@ -104,9 +109,15 @@ class EdgeGATLayer(nn.Module):
         return out + self.bias, alpha
 
 
-class GATGRUForecaster(nn.Module):
-    """GAT on every snapshot (spatial: who influences whom, weighted by learned attention)
-    -> GRU over the window for each service (temporal) -> linear head for H steps x K targets.
+class GATRecurrentForecaster(nn.Module):
+    """Shared graph-temporal forecaster used by GAT-GRU and GAT-LSTM.
+
+    GAT is applied to every snapshot (spatial: who influences whom, weighted by
+    learned attention).  A GRU or LSTM then processes the graph representation
+    over the window independently for each service before the common linear head.
+
+    The historical class and ``self.gru`` attribute names are retained so old
+    GAT-GRU state dictionaries keep the same parameter keys.
 
     edge_direction: 'forward' = message caller -> callee (load propagates downstream),
                     'reverse' = callee -> caller (back-pressure / latency propagates upstream),
@@ -114,7 +125,7 @@ class GATGRUForecaster(nn.Module):
 
     def __init__(self, n_nodes, n_feat, horizon, n_targets, edges, n_edge_feat=0, gat_hidden=32, heads=2,
                  gat_layers=1, gru_hidden=64, dropout=0.1, use_edge_features=True, edge_direction='forward',
-                 emb_dim=4, **_):
+                 emb_dim=4, temporal_cell='gru', **_):
         super().__init__()
         self.N, self.H, self.K = n_nodes, horizon, n_targets
         self.emb = nn.Embedding(n_nodes, emb_dim)
@@ -141,7 +152,11 @@ class GATGRUForecaster(nn.Module):
                                  for i in range(gat_layers))
         self.skip = nn.Linear(in_dim, heads * gat_hidden)               # keep the node's own signal
         self.drop = nn.Dropout(dropout)
-        self.gru = nn.GRU(heads * gat_hidden, gru_hidden, batch_first=True)
+        if temporal_cell not in ('gru', 'lstm'):
+            raise ValueError(f'Unknown temporal_cell: {temporal_cell}')
+        self.temporal_cell = temporal_cell
+        recurrent = nn.GRU if temporal_cell == 'gru' else nn.LSTM
+        self.gru = recurrent(heads * gat_hidden, gru_hidden, batch_first=True)
         self.head = nn.Linear(gru_hidden, horizon * n_targets)
         self.last_attention = None
 
@@ -170,12 +185,18 @@ class GATGRUForecaster(nn.Module):
         return y.view(B, N, self.H, self.K).permute(0, 2, 1, 3)
 
 
+# Backward-compatible public name used by existing notebooks and checkpoints.
+GATGRUForecaster = GATRecurrentForecaster
+
+
 def build_model(kind, cfg, n_feat, n_edge_feat=0, edges=None, horizon=6):
     common = dict(n_nodes=len(fd.SERVICES), n_feat=n_feat, horizon=horizon, n_targets=len(fd.TARGETS))
     if kind == 'lstm':
         return LSTMForecaster(**common, **cfg)
-    if kind == 'gatgru':
-        return GATGRUForecaster(**common, edges=edges, n_edge_feat=n_edge_feat, **cfg)
+    if kind in GRAPH_MODEL_KINDS:
+        graph_cfg = dict(cfg)
+        graph_cfg['temporal_cell'] = 'lstm' if kind == 'gatlstm' else 'gru'
+        return GATRecurrentForecaster(**common, edges=edges, n_edge_feat=n_edge_feat, **graph_cfg)
     raise ValueError(kind)
 
 
@@ -267,9 +288,18 @@ class Data:
     """Windows for a given feature set, built lazily per window length and cached
     (scalers are fit once on train timesteps and do not depend on the window)."""
 
-    def __init__(self, runs, splits, node_feats, edge_feats=None, horizon=6):
+    def __init__(self, runs, splits, node_feats, edge_feats=None, horizon=6, contract=None):
         self.runs, self.splits, self.horizon = runs, splits, horizon
         self.node_feats, self.edge_feats = list(node_feats), list(edge_feats or [])
+        base = dict(contract or fd.data_contract(runs, splits, self.node_feats, fd.TARGETS))
+        base['node_features'] = list(self.node_feats)
+        base['edge_features'] = list(self.edge_feats)
+        base['targets'] = list(fd.TARGETS)
+        base['horizon'] = horizon
+        self.contract = base
+        self.contract_fingerprint = fd.manifest_fingerprint(base)
+        code_hash = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+        self.study_fingerprint = fd.manifest_fingerprint({'contract': base, 'training_code': code_hash})
         self.scalers = fd.fit_scalers(runs, splits, self.node_feats, self.edge_feats)
         self._cache = {}
 
@@ -309,6 +339,8 @@ DEFAULT_CONFIG = {
              'mode': 'per_service'},
     'gatgru': {'window': 12, 'dropout': 0.1, 'lr': 1e-3, 'batch_size': 128, 'gat_hidden': 32, 'heads': 2,
                'gat_layers': 1, 'gru_hidden': 64, 'edge_direction': 'forward', 'use_edge_features': True},
+    'gatlstm': {'window': 12, 'dropout': 0.1, 'lr': 1e-3, 'batch_size': 128, 'gat_hidden': 32, 'heads': 2,
+                'gat_layers': 1, 'gru_hidden': 64, 'edge_direction': 'forward', 'use_edge_features': True},
 }
 
 
@@ -319,7 +351,7 @@ def model_args(cfg):
 
 def fit_one(kind, cfg, data, edges=None, seed=0, device='cpu', trial=None, verbose=False):
     set_seed(seed)
-    use_edges = kind == 'gatgru' and cfg.get('use_edge_features', False) and bool(data.edge_feats)
+    use_edges = kind in GRAPH_MODEL_KINDS and cfg.get('use_edge_features', False) and bool(data.edge_feats)
     model = build_model(kind, model_args(cfg), len(data.node_feats),
                         len(data.edge_feats) if use_edges else 0, edges, data.horizon)
     best, hist = train_model(model, data.get(cfg['window'], 'train'), data.get(cfg['window'], 'val'),
@@ -327,8 +359,13 @@ def fit_one(kind, cfg, data, edges=None, seed=0, device='cpu', trial=None, verbo
     return model, best, hist, use_edges
 
 
-def run_optuna(kind, data, edges=None, n_trials=40, timeout=None, seed=42, device='cpu', max_epochs=None):
-    """Same sampler, pruner, seed and budget for every model kind."""
+def run_optuna(kind, data, edges=None, n_trials=40, timeout=None, seed=42, device='cpu', max_epochs=None,
+               storage=None, study_name=None, load_if_exists=True):
+    """Same sampler/pruner/budget for every model, optionally persisted in SQLite.
+
+    ``n_trials`` is the desired total number of trials. Resuming an existing study
+    runs only the missing trials, preventing an accidental second full budget.
+    """
     import optuna
     extra = {'max_epochs': max_epochs} if max_epochs else {}
 
@@ -337,16 +374,19 @@ def run_optuna(kind, data, edges=None, n_trials=40, timeout=None, seed=42, devic
         _, best, _, _ = fit_one(kind, cfg, data, edges, seed, device, trial)
         return best
 
-    study = optuna.create_study(direction='minimize',
+    study = optuna.create_study(direction='minimize', study_name=study_name, storage=storage,
+                                load_if_exists=load_if_exists,
                                 sampler=optuna.samplers.TPESampler(seed=seed),
                                 pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=5))
-    study.optimize(objective, n_trials=n_trials, timeout=timeout, gc_after_trial=True)
+    remaining = max(0, n_trials - len(study.trials))
+    if remaining:
+        study.optimize(objective, n_trials=remaining, timeout=timeout, gc_after_trial=True)
     return study
 
 
 def study_config(study, kind, has_edge_features):
     cfg = dict(study.best_params)
-    if kind == 'gatgru' and not has_edge_features:
+    if kind in GRAPH_MODEL_KINDS and not has_edge_features:
         cfg['use_edge_features'] = False
     return cfg
 
@@ -409,20 +449,67 @@ def inference_latency_ms(model, w, use_edges, device='cpu', repeats=20):
 def final_runs(kind, cfg, data, edges=None, seeds=(0, 1, 2, 3, 4), device='cpu'):
     """Retrain the chosen config with several seeds; predict the test split in ORIGINAL units."""
     test_w = data.get(cfg['window'], 'test')
-    preds, vals, models = [], [], []
+    preds, vals, models, histories, train_seconds = [], [], [], [], []
     for s in seeds:
-        model, best, _, use_edges = fit_one(kind, cfg, data, edges, s, device)
+        started = time.perf_counter()
+        model, best, hist, use_edges = fit_one(kind, cfg, data, edges, s, device)
+        train_seconds.append(time.perf_counter() - started)
         pz = predict(model, loader(test_w, use_edges, 512, False), device)
         preds.append(fd.invert_scaler(pz, data.scalers['target']))
         vals.append(best)
         models.append(model)
+        histories.append(hist.to_dict('records'))
     meta = {'model': kind, 'config': cfg, 'seeds': list(seeds), 'val_mae_scaled': vals,
             'node_features': data.node_feats, 'edge_features': data.edge_feats if use_edges else [],
             'targets': fd.TARGETS, 'services': fd.SERVICES, 'n_params': n_params(models[0]),
             'inference_ms': inference_latency_ms(models[0], test_w, use_edges, device),
-            'scalers': data.scalers}
+            'scalers': data.scalers, 'data_contract': data.contract,
+            'histories': histories, 'epochs_trained': [len(h) for h in histories],
+            'best_epochs': [int(np.argmin([row['val_mae'] for row in h])) for h in histories],
+            'train_seconds': train_seconds, 'device': str(device)}
     return np.stack(preds), test_w, models, meta
 
 
 def save_model(path, model, meta):
     torch.save({'state_dict': model.state_dict(), 'meta': json.loads(json.dumps(meta, default=float))}, path)
+
+
+def save_training_artifacts(out_dir, kind, cfg, study, models, meta):
+    """Persist everything needed to audit/resume a completed tuning/training run."""
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / f'{kind}_best_config.json').write_text(json.dumps(cfg, indent=2, default=float))
+    (out / f'{kind}_training_meta.json').write_text(json.dumps(meta, indent=2, default=float))
+    study.trials_dataframe(attrs=('number', 'value', 'params', 'state', 'datetime_start',
+                                  'datetime_complete', 'duration')) \
+         .to_csv(out / f'{kind}_optuna_trials.csv', index=False)
+    study_summary = {
+        'study_name': study.study_name,
+        'direction': study.direction.name,
+        'n_trials': len(study.trials),
+        'best_value': study.best_value,
+        'best_params': study.best_params,
+        'data_contract': meta.get('data_contract'),
+    }
+    (out / f'{kind}_optuna_summary.json').write_text(json.dumps(study_summary, indent=2, default=float))
+    for seed, model, history in zip(meta['seeds'], models, meta['histories']):
+        save_model(out / f'{kind}_model_seed_{seed}.pt', model, meta)
+        pd.DataFrame(history).to_csv(out / f'{kind}_history_seed_{seed}.csv', index=False)
+    environment = {
+        'python': sys.version,
+        'platform': platform.platform(),
+        'numpy': np.__version__,
+        'pandas': pd.__version__,
+        'torch': str(torch.__version__),
+        'device': meta.get('device'),
+        'source_sha256': {
+            'forecast_torch.py': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'forecast_data.py': hashlib.sha256(Path(fd.__file__).read_bytes()).hexdigest(),
+        },
+    }
+    try:
+        import optuna
+        environment['optuna'] = optuna.__version__
+    except ImportError:
+        environment['optuna'] = None
+    (out / f'{kind}_environment.json').write_text(json.dumps(environment, indent=2))

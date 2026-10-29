@@ -1,0 +1,4 @@
+# Derived caches are reproducible or distributed separately. Raw data is
+# intentionally not ignored and must be pushed with the repository.
+/processed/
+__pycache__/

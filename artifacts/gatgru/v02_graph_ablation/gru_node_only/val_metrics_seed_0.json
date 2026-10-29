@@ -1,0 +1,16 @@
+{
+  "primary_score": 0.1182550388769739,
+  "cpu_weighted_diagnostic": 0.11044806317041177,
+  "pooled_scaled_mae": 0.11822973191738129,
+  "rps_in_scaled_mae_macro": 0.14427829123218103,
+  "rps_in_mae_macro": 1.050665353303426,
+  "cpu_cores_scaled_mae_macro": 0.09223178652176678,
+  "cpu_cores_mae_macro": 0.0140421248329874,
+  "seed": 0,
+  "variant": "gru_node_only",
+  "model_kind": "gru_node_only",
+  "train_seconds": 464.3718369999988,
+  "early_stop_val_mae": 0.11822973191738129,
+  "n_params": 121016,
+  "epochs_trained": 34
+}

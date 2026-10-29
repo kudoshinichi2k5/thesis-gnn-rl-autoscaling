@@ -1,0 +1,16 @@
+{
+  "primary_score": 0.11585425657700263,
+  "cpu_weighted_diagnostic": 0.1089573684424211,
+  "pooled_scaled_mae": 0.11582452803850174,
+  "rps_in_scaled_mae_macro": 0.1388438836922744,
+  "rps_in_mae_macro": 1.021234388937831,
+  "cpu_cores_scaled_mae_macro": 0.09286462946173084,
+  "cpu_cores_mae_macro": 0.014270800264176358,
+  "seed": 4,
+  "variant": "lstm_joint_h73_w18",
+  "model_kind": "lstm",
+  "train_seconds": 59.8320922999992,
+  "early_stop_val_mae": 0.11582452803850174,
+  "n_params": 119896,
+  "epochs_trained": 38
+}

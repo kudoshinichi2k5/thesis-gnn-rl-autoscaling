@@ -1,0 +1,16 @@
+{
+  "primary_score": 0.11564578599553249,
+  "cpu_weighted_diagnostic": 0.10838186300536093,
+  "pooled_scaled_mae": 0.11562418192625046,
+  "rps_in_scaled_mae_macro": 0.13985886262943772,
+  "rps_in_mae_macro": 1.0222384074751236,
+  "cpu_cores_scaled_mae_macro": 0.09143270936162724,
+  "cpu_cores_mae_macro": 0.013916225952115427,
+  "seed": 4,
+  "variant": "confirm_edge_call_ratio",
+  "model_kind": "gatgru",
+  "train_seconds": 473.1739619,
+  "early_stop_val_mae": 0.11562418192625046,
+  "n_params": 121544,
+  "epochs_trained": 22
+}

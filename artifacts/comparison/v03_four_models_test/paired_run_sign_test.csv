@@ -1,0 +1,5 @@
+pair,target,gat_wins,test_run_pairs,sign_test_p,mean_node_only_minus_graph_mae
+gatgru_vs_gru,cpu_cores,4,4,0.125,0.0003923908807337284
+gatgru_vs_gru,rps_in,4,4,0.125,0.011703816056251454
+gatlstm_vs_lstm,cpu_cores,4,4,0.125,0.00046204570680856644
+gatlstm_vs_lstm,rps_in,2,4,1.0,-0.006846708059310924

@@ -1,6 +1,3 @@
-5. Chạy `bash cluster-setup/02-install-istio.sh`. Istio `1.31.0` và Istiod được pin vào control-plane; script đăng ký Jaeger fixed IP qua ServiceEntry `jaeger-collector.external` cổng `9411` để Envoy có cluster đích hợp lệ.
-`verify-istio-injection.sh`: tạo pod server-side dry-run để xác nhận MutatingWebhookConfiguration thêm `istio-proxy`; kiểm tra cả `containers` và `initContainers` vì Kubernetes native sidecar có thể nằm trong initContainers. Với `--check-existing`, rà mọi pod trong namespace. Script 02/03/05 gọi helper để dừng sớm nếu injection hỏng.
-Nếu helper báo thiếu proxy, xem cả `.spec.initContainers`; native sidecar có thể không xuất hiện trong danh sách `.spec.containers`. Nếu sửa Istio/tracing, chạy lại `02-install-istio.sh`, xác nhận preflight thành công, rồi chạy `05-setup-tracing.sh`. Script 05 rollout mọi deployment và dừng nếu pod mới vẫn thiếu sidecar. Không cần dựng lại OpenStack chỉ để xử lý lỗi injection/tracing.
 # Kiến trúc triển khai K3s multi-node
 
 Thư mục này chứa automation dựng lại môi trường benchmark trên OpenStack. K3s chạy trên ba máy trong cùng một cluster: một control-plane và hai worker giống nhau. Prometheus/Grafana/Jaeger và load generator tiếp tục chạy trên hai VM standalone để hạn chế nhiễu tài nguyên lên workload.
@@ -36,10 +33,10 @@ Thư mục này chứa automation dựng lại môi trường benchmark trên Op
 | `node-app` | K3s control-plane | `gp.small-2c` (`00-0000-0002-02`) | 2 | 20 GB | Có | `node-role=control-plane`; taint `dedicated=control-plane:NoSchedule` |
 | `node-app-worker-1` | K3s application worker | `gp.large-4c` (`00-0000-0008-04`) | 4 | 40 GB | Không | `node-role=app-worker`; nhận Online Boutique pods |
 | `node-app-worker-2` | K3s application worker | `gp.large-4c` (`00-0000-0008-04`) | 4 | 40 GB | Không | `node-role=app-worker`; nhận Online Boutique pods |
-| `node-observability` | Standalone monitoring/tracing | `gp.small-1c` (`00-0000-0002-01`) | 1 | 50 GB | Có | Không thuộc cluster; Docker Compose |
+| `node-observability` | Standalone monitoring/tracing | `gp.medium-4c` (`00-0000-0004-04`) | 4 | 50 GB | Có | Không thuộc cluster; Docker Compose |
 | `node-loadgen` | Standalone load generator | `gp.small-1c` (`00-0000-0002-01`) | 1 | 30 GB | Có | Không thuộc cluster; Locust/load patterns |
 
-Tổng theo flavor CPU và cấu hình volume là 12 vCPU và 180 GB. Với quota 16 vCPU/200 GB, còn 4 vCPU/20 GB. Hai worker dùng 8 vCPU tổng; theo thông số worker đã nêu, mỗi worker có 8 GB RAM và khoảng 7 GB/3.5 vCPU có thể dùng cho workload sau overhead hệ thống. RAM của control-plane, observability và loadgen phải đối chiếu catalog flavor OpenStack; tổng RAM cần không vượt 22 GB để giữ reserve yêu cầu 2 GB. Không tự suy ra RAM từ tên flavor.
+Tổng theo flavor CPU và cấu hình volume là 15 vCPU và 180 GB. Với quota 16 vCPU/200 GB, còn 1 vCPU và 20 GB storage. Dung lượng RAM phải được đối chiếu với catalog flavor OpenStack trước khi apply và không được vượt quota 24 GB; không tự suy ra RAM từ tên flavor.
 
 ## Labels, taint và scheduling
 
@@ -72,29 +69,30 @@ Thực hiện tuần tự; mỗi bước cần được xác nhận trước khi
 8. Service `frontend-external` là LoadBalancer. K3s ServiceLB dùng host port của Service (mặc định HTTP port `80`); security group Terraform có rule `frontend-http` TCP/80. Truy cập Floating IP của control-plane cần ServiceLB pod/listener hoạt động trên node đó.
 9. Chạy `bash cluster-setup/04-setup-monitoring.sh`. Script sinh file-based discovery từ fixed IP mới của control-plane và hai worker; Prometheus scrape cả ba kubelet tại TCP/10250.
 10. Chạy `bash cluster-setup/05-setup-tracing.sh` để áp Telemetry sampling 100% và restart deployment để Envoy nhận cấu hình.
+11. Chạy `bash cluster-setup/06-setup-loadgen.sh` để đồng bộ `load-testing/` lên `node-loadgen`, tạo virtual environment và cài dependency.
+12. Chạy `bash cluster-setup/07-setup-hpa.sh apply` trước khi thu dataset baseline; dùng `status` để kiểm tra và `delete` khi chuyển sang controller khác.
 
 ## Script và file
 
 - `00-generate-node-ips.sh`: lấy Terraform output; không sửa tay `node-ips.env`.
 - `01-install-server.sh`: cài K3s server, cấp kubeconfig/token, và đặt label/taint trước worker.
 - `01b-install-worker.sh`: nhận một worker private IP, xác thực IP thuộc một trong hai worker, SSH qua control-plane, cài K3s agent, chờ Ready, label node và in danh sách node.
-- `verify-istio-injection.sh`: tạo pod server-side dry-run để xác nhận MutatingWebhookConfiguration thực sự thêm `istio-proxy`; với `--check-existing`, kiểm tra mọi pod đang chạy trong namespace. Script 02/03/05 gọi helper để dừng sớm nếu injection hỏng.
-  Script xác nhận admission injector hoạt động trước khi cho qua bước tiếp theo.
-
-Nếu trước đây pod Online Boutique chỉ có container ứng dụng mà không có `istio-proxy`, sau khi sửa injector hãy chạy lại `02-install-istio.sh`, xác nhận preflight thành công, rồi chạy `05-setup-tracing.sh`. Script 05 rollout mọi deployment và dừng nếu pod mới vẫn thiếu sidecar. Không cần dựng lại OpenStack chỉ để xử lý lỗi injection.
+- `verify-istio-injection.sh`: tạo pod server-side dry-run để xác nhận MutatingWebhookConfiguration thêm `istio-proxy`; với `--check-existing`, kiểm tra mọi pod đang chạy trong namespace. Script 02/03/05 gọi helper và dừng nếu admission injection không đạt.
 - `02-install-istio.sh`: cài Istio, cấu hình tài nguyên, scheduling Istiod và Jaeger extension provider.
 - `03-deploy-online-boutique.sh`: vendor/install Helm chart và áp patch có thể tái tạo sau `rsync --delete`.
 - `04-setup-monitoring.sh`: tạo RBAC, kubeconfig KSM, Prometheus config và file SD target list rồi triển khai Docker Compose ở node-observability.
 - `05-setup-tracing.sh`: bật Telemetry sampling 100%, restart ứng dụng và kiểm tra rollout frontend.
+- `06-setup-loadgen.sh`: cài dependency và đồng bộ code sinh tải lên `node-loadgen`.
+- `07-setup-hpa.sh`: apply/delete/status HPA baseline cho các deployment được cấu hình.
 - `istio-tracing.yaml`: Istio Telemetry resource dùng provider `external-jaeger`.
 - `node-ips.env`: file runtime được sinh từ Terraform và bị gitignore.
 - `k3s-node-token.txt`: token join worker, secret bị gitignore; không commit/in nội dung.
 
 ## Quota và dữ liệu benchmark
 
-- Quota: tối đa 16 vCPU, 24 GB RAM, 200 GB storage; mục tiêu cấu hình không vượt 15 vCPU, 22 GB RAM, 180 GB storage.
-- CPU đã biết từ flavor IDs: 12 vCPU tổng. Boot volume: 180 GB tổng.
-- Cần xác nhận RAM flavor từ OpenStack trước `apply`. Hai worker chiếm 16 GB theo thông tin flavor; ba node còn lại phải nằm trong 6 GB để đáp ứng giới hạn mục tiêu 22 GB.
+- Quota: tối đa 16 vCPU, 24 GB RAM, 200 GB storage.
+- CPU theo flavor IDs: 15 vCPU tổng. Boot volume: 180 GB tổng.
+- Cần xác nhận tổng RAM flavor từ OpenStack trước `apply`; Terraform không khai báo RAM trực tiếp.
 - Giữ cố định K3s `v1.34.9+k3s1`, Istio `1.31.0`, requests/limits, replica count, scheduling policy và sampling rate giữa các lượt benchmark nếu cần so sánh dataset.
 - `preferred` anti-affinity không đảm bảo rải replica tuyệt đối khi node thiếu tài nguyên hoặc scheduler có ràng buộc khác; kiểm tra node placement thực tế.
 

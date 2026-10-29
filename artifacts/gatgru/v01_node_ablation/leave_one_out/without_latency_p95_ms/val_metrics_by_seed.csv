@@ -1,0 +1,2 @@
+primary_score,cpu_weighted_diagnostic,pooled_scaled_mae,rps_in_scaled_mae_macro,rps_in_mae_macro,cpu_cores_scaled_mae_macro,cpu_cores_mae_macro,seed,variant,model_kind,train_seconds,early_stop_val_mae,n_params,epochs_trained
+0.1148806431548173,0.10737261076609153,0.11486104875802994,0.13990741778390323,1.0119848358689953,0.08985386852573139,0.013701540946994169,0,without_latency_p95_ms,gatgru,551.2135823999997,0.11486104875802994,122072,27

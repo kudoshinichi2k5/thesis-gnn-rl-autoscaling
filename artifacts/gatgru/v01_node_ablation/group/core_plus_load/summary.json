@@ -1,0 +1,41 @@
+{
+  "variant": "core_plus_load",
+  "model_kind": "gatgru",
+  "node_features": [
+    "rps_in",
+    "rps_in_delta",
+    "rps_per_replica",
+    "cpu_cores",
+    "replicas"
+  ],
+  "edge_features": [
+    "call_rate",
+    "call_ratio",
+    "edge_latency_p95_ms"
+  ],
+  "edge_control": "real",
+  "topology_control": "real",
+  "n_seeds": 1,
+  "primary_score_mean": 0.11514827311960843,
+  "primary_score_std": 0.0,
+  "cpu_weighted_diagnostic_mean": 0.10807659448967288,
+  "cpu_weighted_diagnostic_std": 0.0,
+  "pooled_scaled_mae_mean": 0.11512967944145203,
+  "pooled_scaled_mae_std": 0.0,
+  "rps_in_scaled_mae_macro_mean": 0.1387205352193936,
+  "rps_in_scaled_mae_macro_std": 0.0,
+  "cpu_cores_scaled_mae_macro_mean": 0.09157601101982328,
+  "cpu_cores_scaled_mae_macro_std": 0.0,
+  "rps_in_mae_macro_mean": 1.0130502939429924,
+  "rps_in_mae_macro_std": 0.0,
+  "cpu_cores_mae_macro_mean": 0.013963482541123621,
+  "cpu_cores_mae_macro_std": 0.0,
+  "train_seconds_mean": 951.8668480999768,
+  "train_seconds_std": 0.0,
+  "early_stop_val_mae_mean": 0.11512967944145203,
+  "early_stop_val_mae_std": 0.0,
+  "n_params_mean": 120280.0,
+  "n_params_std": 0.0,
+  "epochs_trained_mean": 31.0,
+  "epochs_trained_std": 0.0
+}

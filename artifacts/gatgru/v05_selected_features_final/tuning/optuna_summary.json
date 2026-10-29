@@ -1,0 +1,16 @@
+{
+  "study_name": "gatgru_fb5407310c2dfc0d_fixed_arch",
+  "best_value": 0.10436421938585208,
+  "best_params": {
+    "window": 18,
+    "dropout": 0.008967376666503827,
+    "lr": 0.0005352359452218873,
+    "weight_decay": 1.8854677893580192e-06,
+    "batch_size": 32
+  },
+  "n_trials": 24,
+  "score_weights": {
+    "rps_in": 0.35,
+    "cpu_cores": 0.65
+  }
+}

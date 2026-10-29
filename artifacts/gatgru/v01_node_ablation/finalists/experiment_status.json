@@ -1,0 +1,19 @@
+{
+  "experiment_id": "v01_node_finalist_confirmation",
+  "parent_version": "baseline-2026-10-14",
+  "status": "EVALUATED",
+  "test_accessed": false,
+  "variants": [
+    "confirm_without_cpu_sidecar_cores",
+    "confirm_without_cpu_throttle_ratio",
+    "confirm_full_minus_cpu_resource",
+    "confirm_without_rps_per_replica",
+    "confirm_full13"
+  ],
+  "source_sha256": {
+    "forecast_ablation.py": "aeb971b3bf4ccd9a8288c5961d50837e6ad19b9e3574038651017e3e0b5ae456",
+    "forecast_torch.py": "d738a4cbd994580dbf00bce80432ec170b2e0353393edd3152d4497f3422eda2",
+    "forecast_data.py": "3ecd638da1cd508789a1f2ed8194d3f71acf819cbaada47a1471e4dc5b244175",
+    "forecast_metrics.py": "9aca3fe7f97c7b94b7f61091b275d326bdf72c8d1f0355e4226b194faaae4691"
+  }
+}

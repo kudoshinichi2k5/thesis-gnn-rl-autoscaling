@@ -1,0 +1,16 @@
+{
+  "study_name": "gru_node_only_b55e5fc117df47d5_fixed_arch",
+  "best_value": 0.10893487266625594,
+  "best_params": {
+    "window": 18,
+    "dropout": 0.012531365296947577,
+    "lr": 0.0011888978467149338,
+    "weight_decay": 3.668595806394715e-05,
+    "batch_size": 128
+  },
+  "n_trials": 24,
+  "score_weights": {
+    "rps_in": 0.35,
+    "cpu_cores": 0.65
+  }
+}
