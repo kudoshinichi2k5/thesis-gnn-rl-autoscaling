@@ -17,7 +17,7 @@ Lý do đằng sau các lựa chọn (run là gì, vì sao 8 run, 30 phút, chia
 Lý do thiết kế:
 - **Driver chạy trên `node-loadgen` riêng**, nên bộ sinh tải không chiếm CPU của cụm và không làm nhiễu dữ liệu.
 - **Telemetry được xuất *sau* mỗi run** (Prometheus `query_range`, Jaeger `api/traces` cho đúng khoảng `[start, end]`), không lấy mẫu trực tiếp trong lúc chạy. Cách này không thêm tải lên hệ thống đang đo, và mọi metric nằm trên cùng một lưới thời gian 10s.
-- **Không cần sửa hạ tầng.** Prometheus scrape cAdvisor của cả 3 node và kube-state-metrics. Metric Istio (`istio_requests_total`) **không** được scrape, nên tải và quan hệ gọi giữa service được lấy từ **span Envoy quan sát được trong Jaeger**. Sampling được cấu hình 100%, nhưng capture coverage vẫn phải kiểm tra riêng.
+- **Không cần sửa hạ tầng.** Prometheus scrape cAdvisor của cả 3 node và kube-state-metrics. Metric Istio (`istio_requests_total`) **không** được scrape, nên tải và quan hệ gọi giữa service được lấy từ **span Envoy quan sát được trong Jaeger**. Sampling deployment giữ ở 10%; capture coverage của span vẫn phải kiểm tra riêng.
 - **Luôn thu khi HPA bật.** Replica thay đổi theo tải, nên PPO thấy được ảnh hưởng của việc scale (xem mục 7 của DATASET_GUIDE).
 
 ## Vì sao dùng mô hình luồng đến mở
@@ -114,7 +114,7 @@ rm -rf dataset/raw/mmpp/run_01
 
 ### Bước 4. Thu từng kịch bản: mỗi lần 1 kịch bản × 8 run
 
-**Không chạy cả 4 kịch bản liền một mạch.** Jaeger (`all-in-one`, Badger lưu bền, sampling 100%) không tự xóa span cũ: TTL mặc định là 72 giờ. Mỗi run 30 phút sinh vài triệu span, rồi `collect_metrics.py` lại gửi khoảng 1.800 truy vấn `api/traces` ngay sau run. Dữ liệu dồn qua nhiều run làm node-observability quá tải dần: với 4 vCPU / 4 GB, đợt chạy liền chỉ thu được 4 run rồi dừng.
+**Không chạy cả 4 kịch bản liền một mạch.** Jaeger (`all-in-one`, Badger lưu bền, sampling 10%) không tự xóa span cũ: TTL mặc định là 72 giờ. Mỗi run 30 phút sinh nhiều span, rồi `collect_metrics.py` lại gửi khoảng 1.800 truy vấn `api/traces` ngay sau run. Dữ liệu dồn qua nhiều run làm node-observability quá tải dần: với 4 vCPU / 4 GB, đợt chạy liền chỉ thu được 4 run rồi dừng.
 
 Telemetry đã được xuất ra CSV sau mỗi run, nên Jaeger chỉ cần giữ span của kịch bản đang chạy. Vì vậy mỗi kịch bản là một chu trình riêng:
 
@@ -205,6 +205,77 @@ Số thứ tự run được đánh tiếp sau các run đã có, nên seed vẫ
 
 Kéo kết quả lần cuối (bước 4c), kiểm tra chất lượng (mục bên dưới), mở mục 8 của `notebooks/dataset/analyze_workload.ipynb` để so tải thiết kế với tải quan sát được, rồi chạy các notebook mô hình.
 
+## Thu dữ liệu can thiệp replica (ON-OFF và Pareto)
+
+Quy trình này bổ sung dữ liệu đối chứng cho surrogate; **không chạy PPO**. Script điều khiển chạy trên máy Linux/WSL có `kubectl` + kubeconfig và SSH key tới node-loadgen. HPA phải tắt để replica không bị controller khác thay đổi. Loadgen chỉ phát tải và thu telemetry; replica do script điều khiển từ máy có `kubectl`.
+
+Mỗi cặp dùng cùng scenario/seed (trace open-load xác định), với cùng một baseline trong đó 10 deployment ứng dụng ở 1 replica. Mỗi điều kiện intervention chỉ tăng **một** service; thứ tự baseline và các mức replica được xáo trộn trong từng lần lặp để giảm ảnh hưởng của drift theo thời gian. Đây là phép đo tác động biên từng service, không đo tương tác giữa nhiều service cùng scale.
+
+Default study gồm 20 run: hai scenario × hai lần lặp × (một baseline + hai service × hai mức replica). Mỗi run 30 phút, chưa tính rollout, collector và cooldown; dự kiến hơn 10 giờ. Jaeger có giới hạn dung lượng như mô tả ở bước 4, nên controller mặc định chỉ chạy tối đa 3 **run mới** mỗi invocation. Sau khi xác minh CSV đã lưu, reset Jaeger theo bước 4d rồi chạy lại đúng lệnh/configuration; các run hợp lệ đã có sẽ được xác minh và bỏ qua. Sáu batch đầu thu 18 run, batch cuối thu 2. Có thể đặt `MAX_RUNS_PER_INVOCATION=0` để bỏ giới hạn, nhưng không khuyến nghị trên node-observability hiện tại. Có thể bắt đầu giảm thời lượng bằng `RUN_DURATION_SEC=600`, nhưng run ngắn không tương đương run 30 phút và cần giữ cố định giữa các điều kiện được so sánh.
+
+```bash
+# 1. Tắt HPA trên máy có kubectl; status phải báo không còn HPA.
+bash cluster-setup/07-setup-hpa.sh delete
+kubectl get hpa -n online-boutique
+
+# 2. Đồng bộ helper mới lên node-loadgen từ repo root.
+bash cluster-setup/06-setup-loadgen.sh
+
+# 3. Xem plan và kiểm tra cấu hình local; bước này không scale và không phát tải.
+TRACE_SAMPLING_PERCENTAGE=10 bash load-testing/run-intervention.sh --dry-run
+
+# 4. Smoke test 3 phút mỗi điều kiện, ghi vào thư mục riêng để không đụng study chính.
+TRACE_SAMPLING_PERCENTAGE=10 SCENARIOS=onoff \
+INTERVENTION_SERVICES=frontend \
+REPLICA_LEVELS=2 \
+REPEATS=1 \
+RUN_DURATION_SEC=180 \
+COOLDOWN_SEC=0 \
+LOCAL_RESULTS_DIR=dataset/intervention_smoke \
+REMOTE_RESULTS_DIR=/home/ubuntu/dataset/intervention_smoke \
+bash load-testing/run-intervention.sh --dry-run
+
+# Đọc plan, rồi chạy thật smoke test.
+TRACE_SAMPLING_PERCENTAGE=10 SCENARIOS=onoff INTERVENTION_SERVICES=frontend REPLICA_LEVELS=2 REPEATS=1 \
+RUN_DURATION_SEC=180 COOLDOWN_SEC=0 \
+LOCAL_RESULTS_DIR=dataset/intervention_smoke \
+REMOTE_RESULTS_DIR=/home/ubuntu/dataset/intervention_smoke \
+bash load-testing/run-intervention.sh --confirm
+
+# 5. Khi smoke test đạt quality checks, xem plan study chính rồi mới chạy dài.
+TRACE_SAMPLING_PERCENTAGE=10 bash load-testing/run-intervention.sh --dry-run
+TRACE_SAMPLING_PERCENTAGE=10 bash load-testing/run-intervention.sh --confirm
+```
+
+Smoke test chỉ kiểm tra orchestration/telemetry, **không đủ làm kết quả noise floor hay kết luận causal**. Xác nhận từng run có `raw_server_spans > 0`, `jaeger_truncated_windows = 0`, `dropped = 0`, đủ 10 Jaeger services, desired/ready replicas đúng, và hai điều kiện có cùng `trace_sha256`.
+
+Với study chính, giữ nguyên mọi biến cấu hình qua các batch. Sau khi một batch dừng ở thông báo `Batch limit reached`, kiểm tra các run local; nếu batch đạt quality checks và còn run chưa thu, reset Jaeger theo mục **4d** rồi chạy lại cùng lệnh `--confirm`. Script giữ nguyên thứ tự ngẫu nhiên/seed, không ghi đè và chỉ bỏ qua run đã khớp metadata, hash code, trace hash và quality checks. Nếu quality check fail hoặc code/configuration thay đổi, dừng lại để phân loại run; không reset Jaeger trước khi CSV của các run cần cứu đã được lưu.
+
+Default study chính chỉ khảo sát `frontend` và `checkoutservice` ở mức 2, 3 replica, với các deployment khác cố định ở 1. Mở rộng có chủ đích bằng biến môi trường, ví dụ:
+
+```bash
+TRACE_SAMPLING_PERCENTAGE=10 INTERVENTION_SERVICES=frontend,cartservice,currencyservice,productcatalogservice,recommendationservice,checkoutservice \
+REPLICA_LEVELS=2,4 \
+REPEATS=3 \
+bash load-testing/run-intervention.sh --dry-run
+```
+
+Chỉ chạy thật sau khi xem dry-run và kiểm tra số run/thời lượng. Có thể đặt `RUN_DURATION_SEC`, `COOLDOWN_SEC`, `MAX_TARGET_REPLICAS` để điều chỉnh có kiểm soát. `MAX_TARGET_REPLICAS` mặc định là 4; script từ chối mức replica cao hơn. Dùng `tmux` trên một **máy điều khiển còn hoạt động** để SSH ngắt kết nối không dừng script; chạy trong WSL trên laptop không bảo đảm tiếp tục nếu laptop tắt.
+
+Script từ chối HPA đang hoạt động, lưu replica ban đầu, kiểm tra rollout/ready replicas trước mỗi run, không ghi đè kết quả cũ và khôi phục replica ban đầu khi kết thúc/lỗi/nhận SIGINT. Nếu script bị kill cứng hoặc máy điều khiển mất điện, kiểm tra replica thủ công bằng `kubectl get deployments -n online-boutique` trước khi tiếp tục. Trong thời gian chạy không bật lại HPA, không chạy benchmark khác trên cùng cụm.
+
+Mỗi đường dẫn kết quả chỉ dùng một study; nếu cần chạy lại hoặc đổi plan, đặt `LOCAL_RESULTS_DIR` và `REMOTE_RESULTS_DIR` mới thay vì trộn/ghi đè dữ liệu cũ.
+
+Kết quả nằm trong `dataset/intervention/`, theo cấu trúc `scenario/repeat_NN/condition/`. Mỗi run gồm telemetry như pipeline hiện tại, `meta.json` (scenario, seed, cặp, cấu hình intervention và hash trace), cùng `jaeger_server_spans.csv` chứa latency từng server span để đo noise floor. Kiểm tra:
+
+```bash
+cat dataset/intervention/onoff/repeat_01/baseline/collect_report.json
+cat dataset/intervention/onoff/repeat_01/baseline/driver_report.json
+cat dataset/intervention/onoff/repeat_01/baseline/meta.json
+```
+
+Chỉ dùng run đạt đủ các điều kiện: `jaeger_truncated_windows = 0`, `raw_server_spans > 0`, `driver_report.json` có `dropped = 0`, đủ service trong `jaeger_services`, và `node_metrics.csv` xác nhận replica desired/ready giữ đúng cấu hình suốt run. So sánh `trace_sha256` giữa các điều kiện cùng scenario để xác nhận trace giống hệt. Nếu collector cảnh báo Jaeger truncation, loadgen drop, hoặc replica lệch, đánh dấu run không hợp lệ và thu lại trước khi reset Jaeger. Jaeger vẫn tích lũy span; theo dõi dung lượng observability và chia đợt/reset Jaeger chỉ sau khi CSV của đợt đã được lưu an toàn.
+
 ### Chờ HPA giữa các run
 
 Trước mỗi run, script đọc `max(kube_deployment_spec_replicas)` từ Prometheus (loadgen không có kubectl) và chờ tới khi mọi deployment về 1 replica. HPA chỉ scale down sau 5 phút ổn định rồi bớt 1 pod mỗi 60s, nên từ 10 replica về 1 mất khoảng 14 phút. Quá `REPLICA_WAIT_MAX_SEC` thì script in cảnh báo và vẫn chạy tiếp; số replica lúc bắt đầu được ghi vào `meta.json` (`replicas_at_start`).
@@ -242,6 +313,7 @@ Ghi chú về nguồn dữ liệu:
 - CPU, memory và network lấy theo pod rồi **gộp theo service** (tên pod `<deployment>-<hash>-<id>`). CPU ứng dụng không tính container `istio-proxy`; CPU của sidecar được tách riêng thành `cpu_sidecar_cores`.
 - Cạnh `A → B` được lấy từ span `client` của sidecar A. Đích xác định qua tag `upstream_cluster`, hoặc qua span `server` con. Online Boutique chưa truyền tiếp trace header, nên mỗi trace chỉ gồm một cặp client–server. Cấu trúc này cho phép đếm các cạnh quan sát được, nhưng Jaeger UI không hiện một chuỗi trace đầy đủ.
 - `cartservice → redis-cart` là TCP, không có span, nên `call_rate = 0`. Cạnh vẫn được giữ trong topology tĩnh; tải của `redis-cart` thể hiện qua network và `cpu_sidecar_cores`.
+- Với intervention, `jaeger_server_spans.csv` là file tùy chọn do `--raw-spans-out` tạo; file chứa timestamp, service, latency, error, operation, trace ID và span ID để phân tích phân phối latency ở cấp span.
 
 ## Kiểm tra chất lượng từng run
 
@@ -326,6 +398,14 @@ Các feature dưới đây được tạo trong preprocessing để phục vụ 
 | Toàn đồ thị | `e2e_rps`, `e2e_latency_p95_ms`, `e2e_error_rate`, `slo_violation`, `total_replicas` | Trạng thái SLO đầu-cuối và chi phí, dùng cho state/reward của PPO |
 
 Final v05 không dùng `error_rate`, `cpu_util_request`, `cpu_throttle_ratio`, `cpu_sidecar_cores`, `restarts_delta` hoặc `edge_error_rate` làm input dự báo. RL vẫn có thể lấy error/SLO metrics trực tiếp từ telemetry hoặc environment state.
+
+## Intervention study v2 (current collection protocol)
+
+The intervention controller now defaults to ON-OFF/Pareto, the main RL-controlled services, replica levels 2 and 4, three paired repeats, and a 90-second post-rollout settle period. It records the intended trace sampling percentage in `meta.json` and validates `replicas` and `replicas_desired` for every service row across the complete `node_metrics.csv`.
+
+The production mesh remains configured at 10% Jaeger sampling and is not changed for this study. Run with `TRACE_SAMPLING_PERCENTAGE=10` (the controller rejects other values). Prometheus is the primary source for resource/replica telemetry; Jaeger spans remain sampled diagnostics. Report span coverage and do not interpret sampled raw spans as a complete request-level noise-floor distribution.
+
+The end-of-study validator checks that `planned`, `expected_mean_rps`, and `designed_mean_rps` in `driver_report.json` are identical across paired conditions. Different `completed` counts are possible when latency changes; report them instead of silently treating the realized work as identical. The study remains a single-service marginal intervention and does not identify multi-service action interactions.
 
 ## Troubleshooting
 

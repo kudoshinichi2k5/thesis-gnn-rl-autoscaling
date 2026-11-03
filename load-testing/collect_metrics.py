@@ -6,12 +6,14 @@ adds no load to the cluster while the test is running.
 
 Sources (all already deployed by cluster-setup/):
   * Prometheus  (node-observability:9090) - cAdvisor on every node + kube-state-metrics
-  * Jaeger      (node-observability:16686) - Envoy/Istio spans, 100% sampling
+  * Jaeger      (node-observability:16686) - Envoy/Istio spans; sampling is a
+    deployment setting and is recorded by the intervention metadata
 
 Outputs in --out:
   node_metrics.csv     timestamp, service, resource/capacity features (Prometheus)
   edge_metrics.csv     timestamp, source, target, call_count, error_count, p50/p95 latency (Jaeger)
   service_metrics.csv  timestamp, service, inbound count/errors/p50/p95 latency (Jaeger)
+  jaeger_server_spans.csv  per-server-span latency (optional; --raw-spans-out)
   collect_report.json  coverage summary (series found, empty windows, truncated windows)
 
 Usage:
@@ -209,7 +211,16 @@ def _pct(values, q):
     return values[idx]
 
 
-def collect_jaeger(base: str, ns: str, start: int, end: int, step: int, limit: int, report: dict):
+def collect_jaeger(
+    base: str,
+    ns: str,
+    start: int,
+    end: int,
+    step: int,
+    limit: int,
+    report: dict,
+    raw_spans: list | None = None,
+):
     """Bucket Envoy spans by start time into step windows.
     Edge = client span of service A whose upstream is service B (or whose child
     server span belongs to B). Inbound = server spans of a service."""
@@ -249,6 +260,17 @@ def collect_jaeger(base: str, ns: str, start: int, end: int, step: int, limit: i
                     err = _is_error(tags)
                     if kind == "server":
                         acc = inbound[(bucket, owner)]
+                        if raw_spans is not None:
+                            raw_spans.append([
+                                s["startTime"] / 1_000_000,
+                                bucket,
+                                owner,
+                                lat_ms,
+                                int(err),
+                                s.get("operationName", ""),
+                                trace.get("traceID", ""),
+                                s["spanID"],
+                            ])
                     elif kind == "client":
                         dst = _upstream_service(tags)
                         if dst is None:
@@ -291,6 +313,7 @@ def main():
     p.add_argument("--rate-window", default=os.environ.get("RATE_WINDOW", "40s"),
                    help="rate() window, >= 3x the 10s scrape interval")
     p.add_argument("--trace-limit", type=int, default=int(os.environ.get("TRACE_LIMIT", 1500)))
+    p.add_argument("--raw-spans-out", help="optional CSV path for individual Jaeger server spans")
     p.add_argument("--skip-jaeger", action="store_true")
     args = p.parse_args()
 
@@ -309,8 +332,9 @@ def main():
     )
 
     if not args.skip_jaeger:
+        raw_spans = [] if args.raw_spans_out else None
         edges, inbound = collect_jaeger(args.jaeger, args.namespace, start, end, args.step,
-                                        args.trace_limit, report)
+                                        args.trace_limit, report, raw_spans)
         write_csv(
             os.path.join(args.out, "edge_metrics.csv"),
             ["timestamp", "source", "target", "call_count", "error_count", "latency_p50_ms", "latency_p95_ms"],
@@ -325,6 +349,14 @@ def main():
         )
         report["edge_rows"] = len(edges)
         report["service_rows"] = len(inbound)
+        if args.raw_spans_out:
+            write_csv(
+                args.raw_spans_out,
+                ["timestamp", "bucket_timestamp", "service", "latency_ms", "error",
+                 "operation", "trace_id", "span_id"],
+                raw_spans,
+            )
+            report["raw_server_spans"] = len(raw_spans)
 
     report["node_rows"] = len(node)
     report["elapsed_sec"] = round(time.time() - t0, 1)
