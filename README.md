@@ -8,6 +8,13 @@ GVHD: TS. Huỳnh Văn Đặng. Sinh viên: Lê Trung Kiên (23520797), Trần T
 
 Repo chứa toàn bộ hạ tầng dưới dạng code: tạo máy ảo, dựng cụm Kubernetes, triển khai ứng dụng benchmark, giám sát/truy vết, sinh tải và thu thập dữ liệu. Đây là nền tảng để huấn luyện và đánh giá cơ chế autoscaling **GAT-GRU + PPO** so với **Kubernetes HPA**.
 
+**Trạng thái hiện tại (05/11/2026):** đã có dataset 32 run và bộ bàn giao GAT-GRU v05. Đường RL hiện tại là [Digital Twin + PPO trên Kaggle](notebooks/rl/train_ppo_kaggle.ipynb); campaign hiệu chỉnh Digital Twin chưa được thu đầy đủ và chưa có policy được đánh giá trên cụm thật.
+
+- Phạm vi hiện tại: **NHPP, MMPP, Pareto, ON/OFF; không curriculum; Jaeger sampling 10%**. Những mục khác trong đề cương/báo cáo tiến độ cũ được giữ như lịch sử.
+- RL theo [Digital Twin bán cơ chế có hiệu chỉnh xác suất](docs/RL_DESIGN_PLAN.md): workload trace, replica lifecycle, queue/backlog, CPU work-conservation và mixture-density latency. PPO vẫn bị chặn tới khi calibration validation đạt gate.
+- [Bàn giao DL → RL](README_DL_TO_RL_HANDOFF.md) là nguồn cho contract model; [kế hoạch RL](docs/RL_DESIGN_PLAN.md) mô tả công việc tiếp theo.
+- [Notebook RL trên Kaggle](notebooks/rl/train_ppo_kaggle.ipynb) là artifact huấn luyện duy nhất; lịch sử surrogate v5–v16 không còn nằm trên đường chạy hiện tại.
+
 ---
 
 ## Mục lục
@@ -28,7 +35,7 @@ Repo chứa toàn bộ hạ tầng dưới dạng code: tạo máy ảo, dựng 
 ## 1. Tổng quan đề tài
 
 Các microservice gọi lẫn nhau tạo thành một **đồ thị phụ thuộc**. Khi tải tăng đột biến, độ trễ tại một service có thể lan dọc chuỗi gọi và gây hiệu ứng dây chuyền (cascading failure). Kubernetes HPA mặc định có hai hạn chế:
-- **Phản ứng thụ động (reactive):** chỉ scale *sau khi* CPU đã vượt ngưỡng, cộng thêm 30–60s để pod mới sẵn sàng.
+- **Phản ứng thụ động (reactive):** quyết định dựa trên metric hiện tại/quá khứ; thời gian pod mới sẵn sàng cần đo trên cụm.
 - **Xét từng service riêng lẻ:** bỏ qua quan hệ phụ thuộc, nên service downstream chỉ được scale khi tải đã dồn tới nó.
 
 Đề tài đề xuất cơ chế **proactive horizontal autoscaling** tổ chức theo vòng lặp **MAPE-K**:
@@ -39,7 +46,7 @@ Các microservice gọi lẫn nhau tạo thành một **đồ thị phụ thuộ
 Giới hạn (theo đề cương):
 - Chỉ scale ngang.
 - Chỉ dùng một ứng dụng benchmark (Online Boutique).
-- PPO huấn luyện offline, sau đó triển khai online.
+- PPO huấn luyện bằng tương tác với simulator ngoài cụm, sau đó triển khai policy online. PPO là on-policy; replay CSV cố định không phải môi trường train autoscaling.
 - Tải sinh từ kịch bản có kiểm soát.
 
 ---
@@ -100,7 +107,7 @@ Chi tiết: [`terraform-openstack/README.md`](terraform-openstack/README.md), [`
 | Thu metric | **Prometheus** `v2.54.1` | Scrape cAdvisor trên 3 kubelet và kube-state-metrics mỗi 10s; cung cấp `query_range` để xuất dữ liệu và (đề xuất) phục vụ pha Monitor của controller |
 | Metric container | **cAdvisor** (tích hợp kubelet) | CPU, memory, network, CPU throttling theo container/pod |
 | Metric trạng thái K8s | **kube-state-metrics** `v2.13.0` | Số replica, request/limit, restart: năng lực hiện tại và biến PPO điều khiển |
-| Truy vết phân tán | **Jaeger** `1.60.0` all-in-one, lưu trữ Badger | Nhận span Zipkin từ Envoy với sampling cấu hình 100%; cung cấp RPS, latency và lỗi quan sát được theo service/cạnh. Capture coverage được đánh giá riêng |
+| Truy vết phân tán | **Jaeger** `1.60.0` all-in-one, lưu trữ Badger | Sampling cấu hình hiện tại **10%**; cung cấp RPS, latency và lỗi quan sát từ trace. Metadata raw cũ chưa xác nhận sampling lúc thu; phải kiểm tra tương thích trước khi dùng model trên telemetry mới |
 | Trực quan hóa | **Grafana** `11.2.0` | Dashboard theo dõi trong lúc thu dữ liệu và thực nghiệm |
 | Sinh tải | **Locust** `2.31.8` | Mô phỏng người mua hàng. Driver gevent phát lại trace NHPP / MMPP / Bounded Pareto / ON/OFF (mô hình luồng đến mở) |
 | Xử lý dữ liệu | **Python**, NumPy, pandas, Matplotlib, Jupyter | Xuất telemetry, tiền xử lý, tạo tensor đồ thị cho GAT-GRU |
@@ -128,7 +135,7 @@ thesis-gnn-rl-autoscaling/
 │   ├── 02-install-istio.sh      #   Istio + ServiceEntry Jaeger + injection
 │   ├── 03-deploy-online-boutique.sh
 │   ├── 04-setup-monitoring.sh   #   Prometheus, Grafana, KSM, Jaeger trên node-observability
-│   ├── 05-setup-tracing.sh      #   Telemetry sampling 100% + rollout
+│   ├── 05-setup-tracing.sh      #   áp dụng istio-tracing.yaml (sampling 10%) + rollout
 │   ├── 06-setup-loadgen.sh      #   Locust venv trên node-loadgen
 │   ├── 07-setup-hpa.sh          #   bật/tắt HPA baseline (apply | delete | status)
 │   └── verify-istio-injection.sh
@@ -148,11 +155,13 @@ thesis-gnn-rl-autoscaling/
 ├── notebooks/                   # Chỉ chứa notebook, chia theo model/chức năng
 │   ├── dataset/                 # phân tích workload và chất lượng Jaeger
 │   ├── gatgru/, gatlstm/, lstm/, gru/
+│   ├── rl/train_ppo_kaggle.ipynb # prototype simulator + PPO; output simulation-only
 │   └── comparison/
 ├── artifacts/                   # Checkpoint, prediction, metric và tuning output
 │   ├── gatgru/, gatlstm/, lstm/, gru/
 │   └── comparison/
 ├── configs/gatgru/              # Frozen feature contract và graph contract cho inference
+├── docs/RL_DESIGN_PLAN.md        # Thiết kế RL và điều kiện trước khi train chính thức
 └── modeling-common/             # Code dùng chung: dữ liệu, mô hình, Optuna, metric
     └── forecast_data.py, feature_selection.py, forecast_torch.py, forecast_metrics.py
 ```
@@ -222,12 +231,14 @@ $$\hat{Y}_{t+1:t+h} = f_\theta\left(\mathcal{G}_{t-w+1}, \dots, \mathcal{G}_t\ri
 
 | Thành phần | Định nghĩa đề xuất |
 |---|---|
-| **State** $s_t$ | Với mỗi service: metric hiện tại (CPU util, p95 latency, error rate, RPS), **nhu cầu dự báo** $\hat{y}_{t+1:t+h}$ từ GAT-GRU, số replica hiện tại, cờ vi phạm SLO, thời gian từ lần scale gần nhất. Toàn cục: p95 và lỗi end-to-end tại frontend |
-| **Action** $a_t$ | $\Delta\text{replica} \in \{-1, 0, +1\}$ cho mỗi service được scale (MultiDiscrete), bị chặn trong $[r_{\min}, r_{\max}] = [1, 4]$ |
-| **Reward** $r_t$ | $r_t = -\lambda_{\text{SLO}} \cdot \text{SLOviol}_t \;-\; \lambda_{\text{res}} \cdot \frac{\sum_i \text{replica}_i \cdot \text{req}_i}{\text{capacity}} \;-\; \lambda_{\text{stab}} \cdot \sum_i \lvert a_{t,i} \rvert$. Ba thành phần ứng với tuân thủ SLO, hiệu quả tài nguyên và độ ổn định |
-| **Transition** | Môi trường **offline** xây từ dataset: với tải dự báo và số replica mới, mô hình chuyển trạng thái (học từ dữ liệu thu được, gồm cả dữ liệu có HPA) ước lượng CPU mỗi pod và latency ở bước tiếp theo |
-| **Huấn luyện** | Curriculum learning: **NHPP** (tải có chu kỳ, học giữ ổn định và bám xu hướng) → **ON/OFF** (học phân biệt nhiễu dồn cục, tránh thrashing) → **MMPP** và **Pareto** (học ưu tiên SLO khi tải đột biến hoặc yêu cầu rất nặng) |
-| **Đầu ra** | Chính sách $\pi_\phi(a \mid s)$, xuất sang TorchScript/ONNX để chạy trong controller |
+| **State** $s_t$ | RPS, CPU, RAM, P95, ready, pending, cooldown và backlog của năm service điều khiển; forecast RPS/CPU +30s và +60s; cùng `call_rate`, `call_ratio`, edge P95 của 15 cạnh theo topology tĩnh |
+| **Action** $a_t$ | `MultiDiscrete([3] * 5)`, mã `0/1/2` tương ứng delta `-1/0/+1` cho frontend, cartservice, currencyservice, productcatalogservice và recommendationservice. Miền hiệu chỉnh hiện tại là 1..3 |
+| **Reward** $r_t$ | Phạt bình phương phần P95 frontend vượt 300ms, error rate frontend, tổng replica, số lần đổi/đảo chiều action, action bị cooldown/biên chặn và mức OOD ngoài support profiling |
+| **Transition** | Digital Twin tách `ReplicaLifecycle`, `GraphLoadModel`, `InfrastructureDynamics` và `SurrogateObservationModel`: tải lan truyền caller→callee, Pod mới pending trước khi ready, queue/backlog bảo toàn work; lớp quan sát tái tạo sampling Jaeger 10% và feature X/E |
+| **Huấn luyện** | Lấy mẫu cân bằng **cả bốn scenario ngay từ đầu, không curriculum**. Giữ train/validation/test tách biệt; không dùng prediction test để train hoặc tune |
+| **Đầu ra** | Policy PPO, observation normalizer, cấu hình, seed và provenance. Dùng PyTorch/SB3 trước; ONNX/TorchScript là tùy chọn sau kiểm thử parity |
+
+Điều kiện trước khi train chính thức: inference parity đạt; dữ liệu replica được audit; feature sampling 10% được đối chiếu; simulator qua kiểm tra action-response và rollout validation. Raw hiện có service luôn ở một replica và giá trị `currencyservice.replicas_desired` tới 13, khác trần HPA hiện tại 10; cần xác minh cấu hình lúc thu/cách tổng hợp, không tự sửa raw cho khớp manifest.
 
 ---
 
@@ -308,8 +319,8 @@ Pha K là **bộ nhớ dùng chung** của vòng lặp: các pha khác đọc ng
 
 **Vòng phản hồi của Knowledge.** Phần này giúp K không chỉ là nơi lưu trữ:
 1. **Giám sát độ chính xác online:** controller so sánh dự báo $\hat y_{t+k}$ với giá trị thực khi thời điểm $t+k$ đến, rồi xuất `autoscaler_forecast_error` (MAE trượt 10 phút).
-2. **Phát hiện drift và fallback:** nếu MAE online vượt $2\times$ MAE lúc kiểm thử offline trong một khoảng thời gian định trước, hoặc mất dữ liệu Monitor, controller chuyển sang **chế độ an toàn** (rule giống HPA: CPU 70%) và gắn cờ cần huấn luyện lại.
-3. **Huấn luyện lại offline** (phù hợp giới hạn "PPO huấn luyện offline" của đề cương): Decision Log và telemetry được xuất thành run mới theo đúng định dạng `dataset/raw/`, chạy lại notebook, huấn luyện, kiểm thử, rồi đăng ký phiên bản mới vào Model Registry.
+2. **Phát hiện drift và fallback:** ngưỡng drift được hiệu chỉnh trên validation. Khi predictor lỗi nhưng CPU metric còn mới, dùng rule CPU đã kiểm thử; nếu mất telemetry thì giữ replica, chặn scale-down và báo lỗi. Không dùng CPU stale để fallback.
+3. **Huấn luyện lại ngoài cụm:** lưu Decision Log và telemetry thành dataset phiên bản mới; dùng chúng kiểm tra/hiệu chỉnh simulator, rồi thu rollout PPO mới trong simulator. Không đưa log lịch sử trực tiếp vào PPO như offline replay buffer; không ghi đè dataset/checkpoint DL đã đóng băng.
 4. **Triển khai có kiểm soát:** phiên bản mới chạy ở chế độ **shadow** (dự báo và quyết định nhưng không thực thi, chỉ ghi log) cho đến khi chỉ số trong Decision Log đạt yêu cầu, sau đó mới chuyển sang `active`.
 
 ---
@@ -349,11 +360,11 @@ Lý do của các lựa chọn:
 | Tham số | Giá trị đề xuất | Lý do |
 |---|---|---|
 | Chu kỳ Monitor/Analyze | 10s | Khớp `scrape_interval` và bước của dataset |
-| Chu kỳ quyết định (Plan/Execute) | 30s | Giảm dao động; tương đương nhịp xử lý của HPA |
+| Chu kỳ quyết định (Plan/Execute) | 30s | Giá trị khởi điểm để đánh giá; không giả định bằng chu kỳ HPA |
 | Biên độ | $\lvert\Delta\rvert \le 1$ replica mỗi service mỗi quyết định | Tránh nhảy bậc lớn do dự báo sai |
-| Giới hạn | `minReplicas=1`, `maxReplicas=4` | Giống cấu hình HPA baseline để so sánh công bằng; vừa với 2 worker × 4 vCPU |
-| Cooldown scale-down | 120s sau lần scale gần nhất | Tránh thrashing khi tải dồn cục (ON/OFF) |
-| Fallback | Rule CPU 70% khi mất dữ liệu Monitor hoặc drift | Đảm bảo hệ thống không mất khả năng scale |
+| Giới hạn | `minReplicas=1`, `maxReplicas=3` cho năm service điều khiển | Không cho policy đi ngoài miền Digital Twin đã hiệu chỉnh |
+| Cooldown | 60s sau action được thực thi | Tránh thrashing khi tải dồn cục (ON/OFF) |
+| Fallback | Rule CPU khi CPU còn mới; giữ replica và chặn scale-down nếu mất telemetry | Không đưa quyết định từ metric đã stale |
 | Xung đột với HPA | **Xóa HPA** của các Deployment do controller quản lý | Hai bộ điều khiển cùng scale một Deployment sẽ tranh chấp nhau |
 
 ### 8.3 Lộ trình triển khai
@@ -370,8 +381,8 @@ Lý do của các lựa chọn:
 
 | Yếu tố | Thiết lập |
 |---|---|
-| **Phương pháp so sánh** | (1) **HPA** (`k8s-manifests/hpa/hpa-online-boutique.yaml`): CPU 70% của container ứng dụng, min 1, max 4, scale up ngay, scale down sau 5 phút ổn định. (2) **Proactive baseline**: LSTM không có đồ thị (artifact trong `artifacts/lstm/`) dự báo CPU, rồi áp quy tắc $\text{replica} = \lceil \hat{\text{cpu}}_{t+h} / (0{,}7 \cdot \text{request}) \rceil$. (3) **GAT-GRU + PPO** |
-| **Service được scale** | Giống nhau cho cả 3 phương pháp: `frontend`, `cartservice`, `checkoutservice`, `currencyservice`, `productcatalogservice`, `recommendationservice` (các service còn lại cố định 1 replica) |
+| **Phương pháp so sánh** | (1) **HPA** (`k8s-manifests/hpa/hpa-online-boutique.yaml`): CPU 70% của container ứng dụng, min 1, max 10, scale down sau 5 phút ổn định. (2) **Proactive baseline**: chọn rõ phiên bản LSTM, dự báo CPU rồi áp rule dùng CPU request mỗi pod. (3) **GAT-GRU + PPO**. Bổ sung GAT-GRU + cùng rule hoặc PPO không forecast để tách đóng góp |
+| **Service được scale** | Cùng năm service của action space RL, giới hạn 1–3; các service còn lại cố định. HPA/baseline phải dùng cùng phạm vi để so sánh công bằng |
 | **Kịch bản tải** | 4 kịch bản trong `dataset/raw/` (NHPP, MMPP, Pareto, ON/OFF), mỗi run 30 phút |
 | **Lặp lại** | 3 run cho mỗi (phương pháp × kịch bản), tổng $3 \times 4 \times 3 = 36$ run, khoảng 25–30 giờ (gồm thời gian chờ scale về 1 replica giữa các run) |
 | **So sánh cặp** | Cùng chuỗi tải cho cả 3 phương pháp: mỗi phương pháp ghi vào `RESULTS_DIR` riêng với cùng `SEED_BASE`, nên run thứ *k* của mọi phương pháp có cùng seed và cùng trace. Mọi khác biệt khi đó đến từ autoscaler, không đến từ tải. Với mô hình mở, tải không tự giảm khi autoscaler phản ứng chậm, nên vi phạm SLO được đo trung thực hơn |
@@ -424,7 +435,7 @@ Ký hiệu: $\Delta t = 10s$ là một bước; $r_{i,t}$ là replica của serv
   - Chuỗi thời gian RPS, replica, p95 chồng 3 phương pháp trên cùng một run MMPP: thấy rõ proactive scale *trước* đỉnh tải.
   - Biểu đồ đánh đổi **chi phí (replica-giờ) – SLO violation**: mỗi điểm là một (phương pháp × kịch bản).
   - Boxplot scaling frequency và oscillation cho kịch bản ON/OFF.
-- **Giả thuyết cần kiểm chứng:** GAT-GRU+PPO có thể giảm SLO violation, thời gian phản ứng hoặc oscillation so với HPA mà không tăng chi phí tài nguyên quá mức. So sánh với proactive baseline không có đồ thị được dùng để định lượng liệu graph input có tạo khác biệt trong closed loop hay không.
+- **Giả thuyết cần kiểm chứng:** GAT-GRU+PPO có thể giảm SLO violation, thời gian phản ứng hoặc oscillation so với HPA mà không tăng chi phí tài nguyên quá mức. So sánh với LSTM + rule đồng thời đổi predictor và controller, nên cần đối chứng bổ sung để kết luận riêng về graph input.
 
 ---
 

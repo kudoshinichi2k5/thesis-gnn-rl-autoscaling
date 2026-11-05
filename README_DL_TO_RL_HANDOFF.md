@@ -872,7 +872,8 @@ Prediction test hiện có không đủ để train RL và không nên dùng tra
 
 ### 10.3 Forecast fields cho RL
 
-Không có một observation schema RL mới nào được triển khai trong repo. Consumer nên giữ đầy đủ forecast trước khi quyết định aggregate:
+Notebook Digital Twin hiện giữ output đầy đủ của wrapper rồi đưa hai horizon +30s và
++60s của năm service điều khiển vào observation PPO:
 
 ```text
 forecast_rps     [6,11]
@@ -880,7 +881,8 @@ forecast_cpu     [6,11]
 horizon_seconds  [10,20,30,40,50,60]
 ```
 
-Các lựa chọn như chỉ dùng +60s, dùng max/mean qua horizon, hoặc đưa cả sáu horizon vào state phải được coi là hyperparameter của RL và đánh giá riêng. Không sửa output của pretrained GAT-GRU để phù hợp một observation shape tùy ý.
+Đây là quyết định của RL v1, không thay đổi output contract của pretrained GAT-GRU.
+Các cách aggregate/horizon khác phải được đánh giá như ablation của RL.
 
 ### 10.4 `error_rate` trong RL mới
 
@@ -890,7 +892,8 @@ Các lựa chọn như chỉ dùng +60s, dùng max/mean qua horizon, hoặc đư
 - `e2e_error_rate` và `slo_violation` từ graph features `G`;
 - forecast RPS/CPU từ GAT-GRU.
 
-Không giả lập `error_rate=0` chỉ vì model không dự báo metric này. Nếu RL reward có error-SLA, error phải đến từ telemetry hoặc environment transition được định nghĩa và kiểm chứng riêng.
+Digital Twin v1 fit error rate không âm theo overload từ calibration train và kiểm tra
+trên validation; không gán `error_rate=0` chỉ vì GAT-GRU không dự báo metric này.
 
 ### 10.5 State, action và reward phải tách khỏi DL contract
 

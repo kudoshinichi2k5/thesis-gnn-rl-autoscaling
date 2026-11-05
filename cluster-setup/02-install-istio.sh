@@ -69,7 +69,7 @@ REMOTE_EOF
 echo "Kiểm tra admission webhook có inject istio-proxy trước khi tiếp tục..."
 bash "${SCRIPT_DIR}/verify-istio-injection.sh" online-boutique
 
-echo "[2/4] Đảm bảo file Telemetry (Sampling 100%) tồn tại..."
+echo "[2/4] Đảm bảo file Telemetry (Sampling 10%) tồn tại..."
 # istio-tracing.yaml là manifest tĩnh, quản lý trong git tại cluster-setup/.
 # Script chỉ tạo nếu CHƯA có — không ghi đè để tránh mất chỉnh sửa thủ công
 # và để tránh hai nơi (script + file) cùng là "nguồn sự thật" cho manifest này.
@@ -84,7 +84,7 @@ spec:
   tracing:
   - providers:
     - name: external-jaeger
-    randomSamplingPercentage: 100.0
+    randomSamplingPercentage: 10.0
 YAML_EOF
 fi
 

@@ -197,6 +197,10 @@ services:
       - BADGER_EPHEMERAL=false
       - BADGER_DIRECTORY_VALUE=/badger/data
       - BADGER_DIRECTORY_KEY=/badger/key
+    command:
+      # Raw spans are exported after every run; keep a rescue window without
+      # accumulating the complete long campaign in the 4 GB VM.
+      - '--badger.span-store-ttl=3h0m0s'
     volumes:
       - jaeger_data:/badger
     restart: unless-stopped

@@ -35,7 +35,8 @@ SEED = int(os.environ.get('SEED', '1'))
 DURATION = int(os.environ.get('RUN_DURATION_SEC', 1800))
 TRACE_DIR = os.environ.get('TRACE_DIR', os.path.join('results', SCENARIO, 'adhoc'))
 MAX_CONCURRENT = int(os.environ.get('MAX_CONCURRENT', 400))
-CONFIG = importlib.import_module(f'scenarios.{SCENARIO}').CONFIG
+CONFIG = am.scaled_config(importlib.import_module(f'scenarios.{SCENARIO}').CONFIG,
+                          float(os.environ.get('LOAD_MULTIPLIER', '1')))
 
 PRODUCT_IDS = ('0PUK6V6EV0', '1YMWWN1N4O', '2ZYFJ3GM2N', '66VCHSJNUP', '6E92ZMYYFZ',
                '9SIQT8TOJO', 'L9ECAV7KIM', 'LS4PSXUNUM', 'OLJCESPC7Z')
@@ -131,6 +132,13 @@ class ArrivalDriver(HttpUser):
         self.clients = {}
         pool = Pool(MAX_CONCURRENT)
         t0 = time.monotonic()
+        STATS['trace_start_epoch'] = time.time()
+        STATS['trace_events_total'] = len(trace['events'])
+        marker = os.path.join(TRACE_DIR, 'driver_started.json')
+        with open(marker + '.tmp', 'w') as stream:
+            json.dump(dict(trace_start_epoch=STATS['trace_start_epoch'],
+                           scenario=SCENARIO, seed=SEED), stream)
+        os.replace(marker + '.tmp', marker)
         for ev in trace['events']:
             delay = ev['t'] - (time.monotonic() - t0)
             if delay > 0:
@@ -148,6 +156,7 @@ class ArrivalDriver(HttpUser):
 
 @events.test_stop.add_listener
 def _report(environment, **_):
+    STATS['unfinished'] = STATS['started'] - STATS['completed'] - STATS['failed']
     STATS['dropped_ratio'] = STATS['dropped'] / STATS['planned'] if STATS['planned'] else 0.0
     STATS.update(scenario=SCENARIO, seed=SEED, duration=DURATION, max_concurrent=MAX_CONCURRENT)
     os.makedirs(TRACE_DIR, exist_ok=True)

@@ -7,4 +7,4 @@ spec:
   tracing:
   - providers:
     - name: external-jaeger
-    randomSamplingPercentage: 100.0
+    randomSamplingPercentage: 10.0

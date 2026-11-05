@@ -1,5 +1,90 @@
 # Load testing và thu raw dataset
 
+## Thu dữ liệu hiệu chỉnh Digital Twin
+
+Thiết kế và nguồn khoa học: [RL_DESIGN_PLAN.md](../docs/RL_DESIGN_PLAN.md).
+
+Chỉ có một entry point: **`run-profiling.py`**; cấu hình nằm trong
+**`profiling-plan.json`**. Script lập lịch replica, ghi command/desired/ready/available,
+thu raw server spans, kiểm tra dữ liệu và xuất manifest có hash. Helper
+`run-profile-loadgen.sh` chỉ được controller gọi nội bộ.
+
+| Profile | Mục đích | Ngân sách đầy đủ |
+|---|---|---|
+| `smoke` | ON/OFF tải 0.5, `recommendationservice` 1→2→3→1 | 1 run đầu tiên khoảng 10 phút |
+| `main` | 4 scenario × 3 mức tải × train/validation/test | 36 run × 35 phút = 21 giờ tải, chưa tính overhead |
+
+Mỗi run quét tuần tự 1→2→3→1 cho năm service được PPO điều khiển, sau đó đo một
+cấu hình joint hai service. Thứ tự service được xáo trộn theo seed nhưng tái lập được.
+Pair joint còn được salt theo split/scenario/mức tải để 12 run train không lặp duy nhất
+một cặp; surrogate nhận thêm tổng replica của cluster để nhận biết nhiễu tương tác.
+Đây không phải Cartesian lookup table và không dùng MLP sinh toàn bộ next-state.
+Sampling luôn **10%**, Redis cố định một replica và HPA phải tắt. Validator yêu cầu
+target thật sự Available trước action kế tiếp; một lệnh scale thành công chưa đủ.
+
+### Contract dữ liệu bắt buộc cho Digital Twin
+
+Campaign chỉ được chấp nhận khi mỗi run giữ đủ các nhóm sau; không cần tạo lookup table
+hay thêm nhiều file dẫn xuất:
+
+| Nhóm | Trường bắt buộc | Vai trò |
+|---|---|---|
+| Workload ngoại sinh | `timestamp/t`, scenario, seed, `load_multiplier`, `expected_rps`, loại request/session, `size/work_units`, planned/started/completed/dropped/failed | Tách tải được phát khỏi tải hệ thống xử lý được |
+| Replica lifecycle | thời điểm command, service, target, desired, total, ready, available ở mỗi poll; startup delay suy ra từ command→available | Học pending/warm-up và xác nhận action đã có hiệu lực |
+| Tài nguyên | service, CPU app, CPU sidecar, throttling, RAM working set, RX/TX, CPU request/limit, restart, replicas desired/available | Hiệu chỉnh capacity, CPU/RAM và phát hiện nhiễu hạ tầng |
+| Service performance | timestamp, service, sampled request/error count, P50/P95; raw server-span timestamp, duration, error, operation, trace/span ID | Fit và calibration phân phối latency ngẫu nhiên ở sampling 10% |
+| Graph edge | timestamp, caller `source`, callee `target`, sampled call/error count, P50/P95 | Học fan-out và thuộc tính cạnh động để lan truyền tải |
+| Provenance | protocol/study/cell ID, code/trace hash, sampling 10%, namespace, cluster-context hash, split | Chống lẫn campaign, sửa dữ liệu và rò rỉ split |
+
+`capacity_events.jsonl` chứa lifecycle; các file CSV/JSON còn lại đã bao phủ contract trên.
+Pod UID và node placement chỉ là trường mở rộng nếu nghiên cứu thêm restart/scheduling;
+Digital Twin hiện tại không tuyên bố mô hình hóa scheduler hay contention theo node.
+
+Chạy từ repo root trên máy Linux/WSL có kubectl/SSH/rsync. Sync helper mới bằng
+`bash cluster-setup/06-setup-loadgen.sh`, rồi tắt HPA bằng
+`bash cluster-setup/07-setup-hpa.sh delete`. Giữ máy điều khiển hoạt động.
+Kubeconfig dùng `127.0.0.1:6443`, vì vậy phải giữ SSH tunnel Kubernetes API theo
+`cluster-setup/README.md` trong suốt quá trình thu. Private key có passphrase phải được
+nạp bằng `ssh-add` trước khi chạy controller vì controller dùng SSH `BatchMode`.
+
+```bash
+# 1. Preview smoke, không tác động cluster.
+python3 load-testing/run-profiling.py --profile smoke
+
+# 2. Chạy đúng một smoke run; thay host/key.
+python3 load-testing/run-profiling.py --profile smoke --confirm --max-new 1 \
+  --ssh-target ubuntu@LOADGEN_IP --ssh-key /path/to/kltn_autoscaling
+
+# 3. Khi đủ ba split smoke mới có thể export; smoke chỉ kiểm tra pipeline.
+python3 load-testing/run-profiling.py --profile smoke \
+  --export dataset/digital-twin-smoke-v1/digital_twin_manifest.json
+
+# 4. Sau khi smoke đạt, preview campaign chính: phải có đúng 36 cell.
+python3 load-testing/run-profiling.py --profile main
+
+# 5. Chạy đúng một campaign dài. Validator kiểm tra từng run và dừng khi có lỗi.
+mkdir -p dataset/digital-twin-calibration-v1
+set -o pipefail
+python3 load-testing/run-profiling.py --profile main --confirm --max-new 36 \
+  --ssh-target ubuntu@LOADGEN_IP --ssh-key /path/to/kltn_autoscaling \
+  2>&1 | tee dataset/digital-twin-calibration-v1/controller-campaign.log
+
+# 6. Xuất manifest hoàn chỉnh; missing_cells phải rỗng.
+python3 load-testing/run-profiling.py \
+  --export dataset/digital-twin-calibration-v1/digital_twin_manifest.json
+```
+
+Thư mục mặc định là `dataset/digital-twin-smoke-v1` và
+`dataset/digital-twin-calibration-v1`. Có thể override bằng `--output` và
+`--remote-results`. Chạy lại đúng lệnh sẽ xác minh rồi bỏ qua run hoàn chỉnh. Không resume
+study cũ bằng protocol mới. Test được thu cùng campaign nhưng notebook khóa test cho tới khi
+Digital Twin, reward và quy tắc chọn checkpoint đã đóng băng.
+
+Notebook [train_ppo_kaggle.ipynb](../notebooks/rl/train_ppo_kaggle.ipynb) nạp manifest bằng
+`KAGGLE_TWIN_MANIFEST`: train/validation dùng hiệu chỉnh và gate; test đóng.
+
+Kiểm thử local: `python3 -B -m unittest discover -s load-testing -p test_profiling.py -v`.
+
 Thư mục này chứa code sinh tải và thu telemetry cho dataset duy nhất của đề tài. Tải được sinh **đúng theo các mô hình luồng đến chuẩn** trong lý thuyết hàng đợi và mô hình hóa traffic: **NHPP, MMPP, Bounded Pareto, ON/OFF**. Raw run được ghi vào [`../dataset/raw/`](../dataset/) và dùng chung cho GAT-GRU, GAT-LSTM, LSTM, GRU và RL. Notebook nằm riêng trong [`../notebooks/`](../notebooks/); code mô hình dùng chung nằm trong [`../modeling-common/`](../modeling-common/README.md).
 
 Lý do đằng sau các lựa chọn (run là gì, vì sao 8 run, 30 phút, chia tập thế nào) được giải thích trong [`../dataset/DATASET_GUIDE.md`](../dataset/DATASET_GUIDE.md).
@@ -18,7 +103,7 @@ Lý do thiết kế:
 - **Driver chạy trên `node-loadgen` riêng**, nên bộ sinh tải không chiếm CPU của cụm và không làm nhiễu dữ liệu.
 - **Telemetry được xuất *sau* mỗi run** (Prometheus `query_range`, Jaeger `api/traces` cho đúng khoảng `[start, end]`), không lấy mẫu trực tiếp trong lúc chạy. Cách này không thêm tải lên hệ thống đang đo, và mọi metric nằm trên cùng một lưới thời gian 10s.
 - **Không cần sửa hạ tầng.** Prometheus scrape cAdvisor của cả 3 node và kube-state-metrics. Metric Istio (`istio_requests_total`) **không** được scrape, nên tải và quan hệ gọi giữa service được lấy từ **span Envoy quan sát được trong Jaeger**. Sampling deployment giữ ở 10%; capture coverage của span vẫn phải kiểm tra riêng.
-- **Luôn thu khi HPA bật.** Replica thay đổi theo tải, nên PPO thấy được ảnh hưởng của việc scale (xem mục 7 của DATASET_GUIDE).
+- **Raw dataset lịch sử thu khi HPA bật; calibration mới thu khi HPA tắt.** Dataset cũ vẫn cung cấp workload/graph/forecast. Campaign mới nhận dạng startup, capacity, CPU/request và phân phối service time trong miền replica 1–3.
 
 ## Vì sao dùng mô hình luồng đến mở
 
@@ -55,9 +140,11 @@ Locust thông thường dùng **mô hình đóng**: có N(t) user cố định, 
 | `scenarios/{nhpp,mmpp,pareto,onoff}.py` | Tham số từng mô hình (`CONFIG`) |
 | `locustfile.py` | **Driver mở**: 1 user Locust phát lại trace, mỗi arrival chạy trong greenlet riêng với `HttpSession` riêng (cookie). Thống kê vẫn được ghi vào Locust. Giới hạn số phiên đồng thời `MAX_CONCURRENT` |
 | `run-scenario.sh` | Chạy N run (seed cố định) trên node-loadgen: chờ HPA về 1 replica, phát tải và xuất node/service/edge telemetry bằng `collect_metrics.py` |
+| `run-profiling.py` | Pipeline hiệu chỉnh Digital Twin: preview, lịch 1→2→3→1, journal capacity, validation/export và khôi phục replica |
+| `run-profile-loadgen.sh` | Helper nội bộ phát tải/thu telemetry; được controller gọi, không chạy riêng |
 | `collect_metrics.py` | Xuất metric của một run từ Prometheus + Jaeger thành CSV |
 | `requirements.txt` | `locust==2.31.8`, `requests` (venv `.venv/` trên node-loadgen, `run-scenario.sh` tự tạo nếu chưa có) |
-| `node-ips.env` | IP các node và `FRONTEND_URL` (điền tay, gitignored) |
+| `cluster-setup/node-ips.env` | Inventory runtime được sinh bởi `00-generate-node-ips.sh`; `06-setup-loadgen.sh` chép bản này sang node-loadgen |
 | `notebooks/dataset/analyze_workload.ipynb` | Kiểm chứng thống kê tải sinh ra và so sánh tải thiết kế với tải quan sát được |
 | `notebooks/gatgru/preprocess_gatgru.ipynb` | Tiền xử lý raw telemetry thành dữ liệu đồ thị |
 | `notebooks/gatgru/feature_selection_gatgru.ipynb` | Phân tích feature nút và feature cạnh trên train/validation |
@@ -78,14 +165,12 @@ bash cluster-setup/07-setup-hpa.sh status
 ### Bước 2. Đồng bộ thư mục lên node-loadgen (máy điều khiển, từ repo root)
 
 ```bash
-ssh -i ~/.ssh/kltn_autoscaling ubuntu@<NODE_LOADGEN_FLOATING_IP> 'mkdir -p ~/load-testing ~/dataset/raw'
-rsync -av --exclude='.venv/' --exclude='__pycache__/' \
-  -e "ssh -i ~/.ssh/kltn_autoscaling" load-testing/ ubuntu@<NODE_LOADGEN_FLOATING_IP>:~/load-testing/
-rsync -av dataset/raw/ \
-  -e "ssh -i ~/.ssh/kltn_autoscaling" ubuntu@<NODE_LOADGEN_FLOATING_IP>:~/dataset/raw/
+bash cluster-setup/06-setup-loadgen.sh
 ```
 
-Chạy lại lệnh này **mỗi khi sửa** code trong thư mục. Lệnh đồng bộ cả `node-ips.env`, nên file này phải có `NODE_OBSERVABILITY_FIXED_IP` và `FRONTEND_URL` đúng.
+Chạy lại lệnh này **mỗi khi sửa** code trong thư mục. Script đồng bộ code và chép
+`cluster-setup/node-ips.env` sang node-loadgen; inventory phải có
+`NODE_OBSERVABILITY_FIXED_IP` và `FRONTEND_URL` đúng.
 
 ### Bước 3. Chạy thử 2 phút (node-loadgen)
 
@@ -204,77 +289,6 @@ Số thứ tự run được đánh tiếp sau các run đã có, nên seed vẫ
 ### Bước 6. Sau khi đủ 4 kịch bản
 
 Kéo kết quả lần cuối (bước 4c), kiểm tra chất lượng (mục bên dưới), mở mục 8 của `notebooks/dataset/analyze_workload.ipynb` để so tải thiết kế với tải quan sát được, rồi chạy các notebook mô hình.
-
-## Thu dữ liệu can thiệp replica (ON-OFF và Pareto)
-
-Quy trình này bổ sung dữ liệu đối chứng cho surrogate; **không chạy PPO**. Script điều khiển chạy trên máy Linux/WSL có `kubectl` + kubeconfig và SSH key tới node-loadgen. HPA phải tắt để replica không bị controller khác thay đổi. Loadgen chỉ phát tải và thu telemetry; replica do script điều khiển từ máy có `kubectl`.
-
-Mỗi cặp dùng cùng scenario/seed (trace open-load xác định), với cùng một baseline trong đó 10 deployment ứng dụng ở 1 replica. Mỗi điều kiện intervention chỉ tăng **một** service; thứ tự baseline và các mức replica được xáo trộn trong từng lần lặp để giảm ảnh hưởng của drift theo thời gian. Đây là phép đo tác động biên từng service, không đo tương tác giữa nhiều service cùng scale.
-
-Default study gồm 20 run: hai scenario × hai lần lặp × (một baseline + hai service × hai mức replica). Mỗi run 30 phút, chưa tính rollout, collector và cooldown; dự kiến hơn 10 giờ. Jaeger có giới hạn dung lượng như mô tả ở bước 4, nên controller mặc định chỉ chạy tối đa 3 **run mới** mỗi invocation. Sau khi xác minh CSV đã lưu, reset Jaeger theo bước 4d rồi chạy lại đúng lệnh/configuration; các run hợp lệ đã có sẽ được xác minh và bỏ qua. Sáu batch đầu thu 18 run, batch cuối thu 2. Có thể đặt `MAX_RUNS_PER_INVOCATION=0` để bỏ giới hạn, nhưng không khuyến nghị trên node-observability hiện tại. Có thể bắt đầu giảm thời lượng bằng `RUN_DURATION_SEC=600`, nhưng run ngắn không tương đương run 30 phút và cần giữ cố định giữa các điều kiện được so sánh.
-
-```bash
-# 1. Tắt HPA trên máy có kubectl; status phải báo không còn HPA.
-bash cluster-setup/07-setup-hpa.sh delete
-kubectl get hpa -n online-boutique
-
-# 2. Đồng bộ helper mới lên node-loadgen từ repo root.
-bash cluster-setup/06-setup-loadgen.sh
-
-# 3. Xem plan và kiểm tra cấu hình local; bước này không scale và không phát tải.
-TRACE_SAMPLING_PERCENTAGE=10 bash load-testing/run-intervention.sh --dry-run
-
-# 4. Smoke test 3 phút mỗi điều kiện, ghi vào thư mục riêng để không đụng study chính.
-TRACE_SAMPLING_PERCENTAGE=10 SCENARIOS=onoff \
-INTERVENTION_SERVICES=frontend \
-REPLICA_LEVELS=2 \
-REPEATS=1 \
-RUN_DURATION_SEC=180 \
-COOLDOWN_SEC=0 \
-LOCAL_RESULTS_DIR=dataset/intervention_smoke \
-REMOTE_RESULTS_DIR=/home/ubuntu/dataset/intervention_smoke \
-bash load-testing/run-intervention.sh --dry-run
-
-# Đọc plan, rồi chạy thật smoke test.
-TRACE_SAMPLING_PERCENTAGE=10 SCENARIOS=onoff INTERVENTION_SERVICES=frontend REPLICA_LEVELS=2 REPEATS=1 \
-RUN_DURATION_SEC=180 COOLDOWN_SEC=0 \
-LOCAL_RESULTS_DIR=dataset/intervention_smoke \
-REMOTE_RESULTS_DIR=/home/ubuntu/dataset/intervention_smoke \
-bash load-testing/run-intervention.sh --confirm
-
-# 5. Khi smoke test đạt quality checks, xem plan study chính rồi mới chạy dài.
-TRACE_SAMPLING_PERCENTAGE=10 bash load-testing/run-intervention.sh --dry-run
-TRACE_SAMPLING_PERCENTAGE=10 bash load-testing/run-intervention.sh --confirm
-```
-
-Smoke test chỉ kiểm tra orchestration/telemetry, **không đủ làm kết quả noise floor hay kết luận causal**. Xác nhận từng run có `raw_server_spans > 0`, `jaeger_truncated_windows = 0`, `dropped = 0`, đủ 10 Jaeger services, desired/ready replicas đúng, và hai điều kiện có cùng `trace_sha256`.
-
-Với study chính, giữ nguyên mọi biến cấu hình qua các batch. Sau khi một batch dừng ở thông báo `Batch limit reached`, kiểm tra các run local; nếu batch đạt quality checks và còn run chưa thu, reset Jaeger theo mục **4d** rồi chạy lại cùng lệnh `--confirm`. Script giữ nguyên thứ tự ngẫu nhiên/seed, không ghi đè và chỉ bỏ qua run đã khớp metadata, hash code, trace hash và quality checks. Nếu quality check fail hoặc code/configuration thay đổi, dừng lại để phân loại run; không reset Jaeger trước khi CSV của các run cần cứu đã được lưu.
-
-Default study chính chỉ khảo sát `frontend` và `checkoutservice` ở mức 2, 3 replica, với các deployment khác cố định ở 1. Mở rộng có chủ đích bằng biến môi trường, ví dụ:
-
-```bash
-TRACE_SAMPLING_PERCENTAGE=10 INTERVENTION_SERVICES=frontend,cartservice,currencyservice,productcatalogservice,recommendationservice,checkoutservice \
-REPLICA_LEVELS=2,4 \
-REPEATS=3 \
-bash load-testing/run-intervention.sh --dry-run
-```
-
-Chỉ chạy thật sau khi xem dry-run và kiểm tra số run/thời lượng. Có thể đặt `RUN_DURATION_SEC`, `COOLDOWN_SEC`, `MAX_TARGET_REPLICAS` để điều chỉnh có kiểm soát. `MAX_TARGET_REPLICAS` mặc định là 4; script từ chối mức replica cao hơn. Dùng `tmux` trên một **máy điều khiển còn hoạt động** để SSH ngắt kết nối không dừng script; chạy trong WSL trên laptop không bảo đảm tiếp tục nếu laptop tắt.
-
-Script từ chối HPA đang hoạt động, lưu replica ban đầu, kiểm tra rollout/ready replicas trước mỗi run, không ghi đè kết quả cũ và khôi phục replica ban đầu khi kết thúc/lỗi/nhận SIGINT. Nếu script bị kill cứng hoặc máy điều khiển mất điện, kiểm tra replica thủ công bằng `kubectl get deployments -n online-boutique` trước khi tiếp tục. Trong thời gian chạy không bật lại HPA, không chạy benchmark khác trên cùng cụm.
-
-Mỗi đường dẫn kết quả chỉ dùng một study; nếu cần chạy lại hoặc đổi plan, đặt `LOCAL_RESULTS_DIR` và `REMOTE_RESULTS_DIR` mới thay vì trộn/ghi đè dữ liệu cũ.
-
-Kết quả nằm trong `dataset/intervention/`, theo cấu trúc `scenario/repeat_NN/condition/`. Mỗi run gồm telemetry như pipeline hiện tại, `meta.json` (scenario, seed, cặp, cấu hình intervention và hash trace), cùng `jaeger_server_spans.csv` chứa latency từng server span để đo noise floor. Kiểm tra:
-
-```bash
-cat dataset/intervention/onoff/repeat_01/baseline/collect_report.json
-cat dataset/intervention/onoff/repeat_01/baseline/driver_report.json
-cat dataset/intervention/onoff/repeat_01/baseline/meta.json
-```
-
-Chỉ dùng run đạt đủ các điều kiện: `jaeger_truncated_windows = 0`, `raw_server_spans > 0`, `driver_report.json` có `dropped = 0`, đủ service trong `jaeger_services`, và `node_metrics.csv` xác nhận replica desired/ready giữ đúng cấu hình suốt run. So sánh `trace_sha256` giữa các điều kiện cùng scenario để xác nhận trace giống hệt. Nếu collector cảnh báo Jaeger truncation, loadgen drop, hoặc replica lệch, đánh dấu run không hợp lệ và thu lại trước khi reset Jaeger. Jaeger vẫn tích lũy span; theo dõi dung lượng observability và chia đợt/reset Jaeger chỉ sau khi CSV của đợt đã được lưu an toàn.
 
 ### Chờ HPA giữa các run
 
@@ -399,14 +413,6 @@ Các feature dưới đây được tạo trong preprocessing để phục vụ 
 
 Final v05 không dùng `error_rate`, `cpu_util_request`, `cpu_throttle_ratio`, `cpu_sidecar_cores`, `restarts_delta` hoặc `edge_error_rate` làm input dự báo. RL vẫn có thể lấy error/SLO metrics trực tiếp từ telemetry hoặc environment state.
 
-## Intervention study v2 (current collection protocol)
-
-The intervention controller now defaults to ON-OFF/Pareto, the main RL-controlled services, replica levels 2 and 4, three paired repeats, and a 90-second post-rollout settle period. It records the intended trace sampling percentage in `meta.json` and validates `replicas` and `replicas_desired` for every service row across the complete `node_metrics.csv`.
-
-The production mesh remains configured at 10% Jaeger sampling and is not changed for this study. Run with `TRACE_SAMPLING_PERCENTAGE=10` (the controller rejects other values). Prometheus is the primary source for resource/replica telemetry; Jaeger spans remain sampled diagnostics. Report span coverage and do not interpret sampled raw spans as a complete request-level noise-floor distribution.
-
-The end-of-study validator checks that `planned`, `expected_mean_rps`, and `designed_mean_rps` in `driver_report.json` are identical across paired conditions. Different `completed` counts are possible when latency changes; report them instead of silently treating the realized work as identical. The study remains a single-service marginal intervention and does not identify multi-service action interactions.
-
 ## Troubleshooting
 
 1. **`frontend unreachable`**: `FRONTEND_URL` trong `node-ips.env` sai. Kiểm tra địa chỉ của service `frontend-external` bằng `kubectl get svc frontend-external -n online-boutique` rồi cập nhật URL.
@@ -414,4 +420,4 @@ The end-of-study validator checks that `planned`, `expected_mean_rps`, and `desi
 3. **`Locust venv missing`**: script tự tạo `.venv/` (cần `python3-venv` trên node-loadgen).
 4. **Mất SSH giữa run**: chạy trong `tmux` (hoặc `nohup`). Run dở dang phải xóa thủ công trong `dataset/raw/`.
 5. **Xuất telemetry chậm**: Jaeger trả trace theo từng cửa sổ 10s cho mỗi service; với run 30 phút ở trạng thái High, bước này mất vài phút.
-6. **node-observability quá tải giữa chừng** (Jaeger không phản hồi, `collect_metrics.py` báo `WARN jaeger ... failed`, `jaeger_services` rỗng): Badger đã tích quá nhiều span. Dừng kịch bản (bước 4b), kéo kết quả về và giữ lại các run đạt (4c), xóa run dở, reset Jaeger (4d), rồi chạy số run còn thiếu (bước 5). Muốn Jaeger tự xóa span cũ mà không cần reset tay thì cần đặt `BADGER_SPAN_STORE_TTL` ngắn (ví dụ `3h`) trong `cluster-setup/04-setup-monitoring.sh`; báo người phụ trách `cluster-setup/`.
+6. **node-observability quá tải giữa chừng** (Jaeger không phản hồi, `collect_metrics.py` báo `WARN jaeger ... failed`, `jaeger_services` rỗng): kiểm tra container có flag `--badger.span-store-ttl=3h0m0s`. Campaign v4 đã cấu hình TTL này trong monitoring Compose; không tăng sampling quá 10%.

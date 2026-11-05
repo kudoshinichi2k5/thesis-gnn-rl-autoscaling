@@ -1,0 +1,75 @@
+{
+  "profiles": {
+    "main": {
+      "protocol": "digital_twin_calibration_v1",
+      "study_id": "online_boutique_digital_twin_v1",
+      "scenarios": ["nhpp", "mmpp", "onoff", "pareto"],
+      "load_multipliers": [0.5, 1.0, 1.5],
+      "seeds_by_split": {
+        "train": [7600],
+        "validation": [7601],
+        "test": [7602]
+      },
+      "repeats": 1,
+      "duration_sec": 2100,
+      "window_sec": 30,
+      "warmup_sec": 300,
+      "settle_sec": 90,
+      "cooldown_sec": 120,
+      "sampling_percentage": 10,
+      "max_total_app_pods": 16,
+      "min_frontend_spans": 40,
+      "max_unstarted_fraction": 0.01,
+      "configurations": [
+        {
+          "adservice": 1,
+          "cartservice": 1,
+          "currencyservice": 1,
+          "emailservice": 1,
+          "paymentservice": 1,
+          "productcatalogservice": 1,
+          "recommendationservice": 1,
+          "shippingservice": 1,
+          "frontend": 1,
+          "checkoutservice": 1
+        }
+      ],
+      "controlled_services": [
+        "frontend",
+        "cartservice",
+        "currencyservice",
+        "productcatalogservice",
+        "recommendationservice"
+      ],
+      "replica_levels": [1, 2, 3],
+      "action_interval_sec": 90,
+      "recovery_dwell_sec": 90,
+      "scale_up_dwell_sec_by_service": {
+        "recommendationservice": 120
+      },
+      "capacity_poll_sec": 5,
+      "max_clock_error_sec": 2,
+      "max_action_lateness_sec": 10,
+      "replica_limits": {
+        "frontend": 3,
+        "cartservice": 3,
+        "currencyservice": 3,
+        "productcatalogservice": 3,
+        "recommendationservice": 3
+      }
+    },
+    "smoke": {
+      "extends": "main",
+      "overrides": {
+        "study_id": "digital_twin_smoke_v1",
+        "scenarios": ["onoff"],
+        "load_multipliers": [0.5],
+        "duration_sec": 600,
+        "warmup_sec": 180,
+        "settle_sec": 30,
+        "cooldown_sec": 0,
+        "controlled_services": ["recommendationservice"]
+      }
+    }
+  }
+}

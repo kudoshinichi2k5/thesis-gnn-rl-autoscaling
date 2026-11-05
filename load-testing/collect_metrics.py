@@ -109,9 +109,13 @@ def collect_prometheus(base: str, ns: str, start: int, end: int, step: int, wind
         try:
             r = requests.get(url, params={"query": promql, "start": start, "end": end, "step": step}, timeout=60)
             r.raise_for_status()
-            result = r.json()["data"]["result"]
+            payload = r.json()
+            if payload.get("status") != "success":
+                raise ValueError("Prometheus did not return success")
+            result = payload["data"]["result"]
         except Exception as exc:
             print(f"[collect] WARN prometheus '{name}' failed: {exc}", file=sys.stderr)
+            report.setdefault("prometheus_query_failures", []).append(name)
             result = []
         report["prometheus_series"][name] = len(result)
         acc = defaultdict(float)
@@ -172,9 +176,13 @@ def fetch_traces(base: str, service: str, start_us: int, end_us: int, limit: int
     try:
         r = requests.get(url, params=params, timeout=120)
         r.raise_for_status()
-        data = r.json().get("data") or []
+        payload = r.json()
+        if payload.get("errors") or not isinstance(payload.get("data"), list):
+            raise ValueError("Jaeger returned errors or malformed data")
+        data = payload["data"]
     except Exception as exc:
         print(f"[collect] WARN jaeger {service} [{start_us},{end_us}) failed: {exc}", file=sys.stderr)
+        report.setdefault("jaeger_failed_queries", []).append({"service": service, "start_us": start_us, "end_us": end_us})
         return []
     if len(data) >= limit:
         if end_us - start_us > 1_000_000 and depth < 4:
@@ -219,7 +227,7 @@ def collect_jaeger(
     step: int,
     limit: int,
     report: dict,
-    raw_spans: list | None = None,
+    raw_spans=None,
 ):
     """Bucket Envoy spans by start time into step windows.
     Edge = client span of service A whose upstream is service B (or whose child
@@ -321,7 +329,7 @@ def main():
     end = args.end
     os.makedirs(args.out, exist_ok=True)
     report = {"start": start, "end": end, "step": args.step, "prometheus_series": {},
-              "jaeger_truncated_windows": 0}
+              "jaeger_truncated_windows": 0, "jaeger_failed_queries": [], "prometheus_query_failures": []}
     t0 = time.time()
 
     node = collect_prometheus(args.prometheus, args.namespace, start, end, args.step, args.rate_window, report)

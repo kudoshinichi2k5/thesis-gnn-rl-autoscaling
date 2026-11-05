@@ -8,3 +8,16 @@ monitoring-stack/file_sd/kubelet-targets.json
 tracker_ai.md
 k8s-manifests/tracker_ai.md
 kltn-env
+
+# Local Python environments and disposable caches
+.venv/
+__pycache__/
+*.py[cod]
+.tmp-*/
+
+# Local calibration/smoke captures are large raw evidence; export/upload them separately.
+dataset/digital-twin-calibration-*/
+dataset/digital-twin-smoke-*/
+
+# Generated RL pilot/review outputs; keep locally or publish outside source control.
+artifacts/rl/
