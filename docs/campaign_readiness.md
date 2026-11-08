@@ -673,4 +673,7 @@ Sau khi collection lock đổi, dùng output v6 mới và đăng ký order đún
   `status=0` đã được ghi đầy đủ nhưng không raise lên session greenlet; session đó hợp lệ
   ở trạng thái `completed`. Validator vẫn bắt mọi `driver_exception` phải có transport
   request cùng session và cùng loại lỗi, nhưng dùng quan hệ tập con thay vì buộc hai tập
-  bằng nhau. Không đổi load, schedule, logger, collector hay ngưỡng khoa học.
+  bằng nhau. Không đổi load, schedule, logger, collector hay ngưỡng khoa học. Campaign
+  v6 đang chạy được tiếp tục bằng order v6 đã đăng ký chỉ khi hash Locust/collector/plan,
+  toàn bộ execution order và validator fingerprint v6.1 khớp tuyệt đối; raw run hợp lệ
+  được resume skip, không phát lại.

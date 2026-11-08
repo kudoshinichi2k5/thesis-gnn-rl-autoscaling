@@ -753,6 +753,35 @@ class CalibrationV2Tests(unittest.TestCase):
             args.max_concurrent+=1
             with self.assertRaisesRegex(ValueError,'differs'): profiling.run(args)
 
+    def test_v61_accepts_only_the_registered_v6_validator_only_transition(self):
+        plan = profiling.load_plan(HERE / 'profiling-plan.json', 'main')
+        candidate = profiling.registered_order(
+            plan, plan['max_concurrent'], HERE / 'profiling-plan.json'
+        )
+        registered = copy.deepcopy(candidate)
+        registered['collection_code_sha256']['run-profiling.py'] = (
+            profiling.PRIOR_VALIDATOR_ONLY_RUNNER_SHA256
+        )
+        registered['collection_lock_sha256'] = profiling.digest(
+            registered['collection_code_sha256']
+        )
+        registered['order_sha256'] = profiling.digest({
+            key: value for key, value in registered.items() if key != 'order_sha256'
+        })
+        self.assertTrue(profiling.validator_only_order_compatible(
+            registered, candidate
+        ))
+        changed_collector = copy.deepcopy(registered)
+        changed_collector['collection_code_sha256']['collect_metrics.py'] = 'changed'
+        self.assertFalse(profiling.validator_only_order_compatible(
+            changed_collector, candidate
+        ))
+        changed_plan = copy.deepcopy(registered)
+        changed_plan['executions'][0]['cell_id'] = 'changed'
+        self.assertFalse(profiling.validator_only_order_compatible(
+            changed_plan, candidate
+        ))
+
     def test_analyzer_writes_fail_closed_estimates_and_preserves_inputs(self):
         from calibration import analyze,read_csv,write_csv
         with tempfile.TemporaryDirectory() as tmp:

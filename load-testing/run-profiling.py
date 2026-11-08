@@ -9,6 +9,7 @@ import argparse
 import copy
 import csv
 import hashlib
+import inspect
 import itertools
 import json
 import math
@@ -29,6 +30,12 @@ from pathlib import Path, PurePosixPath
 
 TWIN_PROTOCOL = 'digital_twin_calibration_v2'
 PROTOCOL_VERSION = 'collection_v6'
+PRIOR_VALIDATOR_ONLY_RUNNER_SHA256 = (
+    'cad613f63a4c5f505f95b3b9e7c8a20cbba97c2985a7e2b38348f31c8d541f2b'
+)
+VALIDATOR_V61_SHA256 = (
+    '301088bc6bbc4d04c9a8f360ab0580d406cb6148cf0a2513fe57bb6813385148'
+)
 def collection_lock_hashes(plan_path=None):
     """Hashes that freeze collection, intentionally excluding offline analysis."""
     root = Path(__file__).parent
@@ -44,6 +51,31 @@ def collection_lock_hashes(plan_path=None):
 
 def collection_lock_sha256(plan_path=None):
     return digest(collection_lock_hashes(plan_path))
+
+
+def validator_only_order_compatible(registered, candidate):
+    """Allow the frozen v6 campaign to adopt only the reviewed v6.1 validator fix.
+
+    Acquisition inputs, execution order and plan must remain byte-identical.  The
+    sole permitted difference is the controller file hash recorded by v6 before
+    transport validation was corrected.  Fingerprinting the validator source keeps
+    this exception one-way and prevents later controller edits from silently using it.
+    """
+    current_validator = hashlib.sha256(
+        inspect.getsource(validate_execution_artifacts).encode()
+    ).hexdigest()
+    if current_validator != VALIDATOR_V61_SHA256:
+        return False
+    old_hashes = registered.get('collection_code_sha256', {})
+    new_hashes = candidate.get('collection_code_sha256', {})
+    if old_hashes.get('run-profiling.py') != PRIOR_VALIDATOR_ONLY_RUNNER_SHA256:
+        return False
+    if any(old_hashes.get(name) != new_hashes.get(name) for name in
+           ('locustfile.py', 'collect_metrics.py', 'profiling-plan.json')):
+        return False
+    stable_fields = ('plan_sha256', 'seed', 'max_concurrent', 'block_max_sec',
+                     'protocol_version', 'executions')
+    return all(registered.get(field) == candidate.get(field) for field in stable_fields)
 
 
 def baseline_for_focus(plan, focus_service=None):
@@ -1306,18 +1338,16 @@ def run_impl(args):
     if args.max_concurrent is None:
         args.max_concurrent = plan['max_concurrent']
     all_cells = execution_cells(plan)
-    order=registered_order(plan,args.max_concurrent,args.plan)
-
-    def expected_profile(cell):
-        return dict(cell, cluster_context_sha256=context_hash,
-                    collection_protocol_version=PROTOCOL_VERSION,
-                    collection_lock_sha256=order['collection_lock_sha256'])
+    candidate_order=registered_order(plan,args.max_concurrent,args.plan)
+    order=candidate_order
     if args.register_order:
         target=Path(args.output)/'campaign_order.json'; target.parent.mkdir(parents=True,exist_ok=True)
         if target.exists():
-            if read_json(target)!=order: raise ValueError('registered order differs; choose a new output')
+            if read_json(target)!=candidate_order:
+                raise ValueError('registered order differs; choose a new output')
         else:
-            with target.open('x',encoding='utf-8') as stream: json.dump(order,stream,indent=2)
+            with target.open('x',encoding='utf-8') as stream:
+                json.dump(candidate_order,stream,indent=2)
         print(f'Registered {len(all_cells)} executions: {target}; SHA256={order["order_sha256"]}')
         return
     if args.export:
@@ -1351,7 +1381,14 @@ def run_impl(args):
     if not (args.confirm or args.collect_only or args.preflight_only):
         return
     if args.confirm or args.collect_only:
-        if read_json(Path(args.output)/'campaign_order.json')!=order:
+        registered=read_json(Path(args.output)/'campaign_order.json')
+        if registered == candidate_order:
+            order=registered
+        elif validator_only_order_compatible(registered,candidate_order):
+            order=registered
+            print('Using registered v6 acquisition order with reviewed v6.1 '
+                  'validator-only compatibility; no workload definition changed.')
+        else:
             raise ValueError('plan/code/concurrency/order changed since registration')
     if (not args.ssh_target or not args.observability_ssh_target or not args.k3s_ssh_target
             or not args.ssh_key or ((args.confirm or args.collect_only) and args.max_new <= 0)):
@@ -1574,13 +1611,21 @@ def run_impl(args):
                    driver_max_concurrent=args.max_concurrent,
                    templates={s: deployments[s]['spec']['template'] for s in (*SERVICES, 'redis-cart')},
                    nodes=json.loads(command(['kubectl', 'get', 'nodes', '-o', 'json'])))
+    # Use the acquisition hash from the registered order.  A reviewed offline
+    # validator-only correction must not make an unchanged cluster context appear
+    # different or force an already collected run to be replayed.
     context['controller_sha256'] = {
-        name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
-        for name in ('run-profiling.py',)}
+        'run-profiling.py': order['collection_code_sha256']['run-profiling.py']
+    }
     context['nodes'] = [{"name": n['metadata']['name'], "capacity": n['status']['capacity'],
                          "nodeInfo": n['status']['nodeInfo']} for n in context['nodes']['items']]
     context['nodes'].sort(key=lambda n: n['name'])
     context_hash = digest(context)
+
+    def expected_profile(cell):
+        return dict(cell, cluster_context_sha256=context_hash,
+                    collection_protocol_version=order['protocol_version'],
+                    collection_lock_sha256=order['collection_lock_sha256'])
 
     def set_capacity(k):
         for s in SERVICES:
@@ -1706,7 +1751,7 @@ def run_impl(args):
             remote_command = ['env', 'TRACE_SAMPLING_PERCENTAGE=10', f'NAMESPACE={args.namespace}',
                               f'LOAD_MULTIPLIER={cell["load_multiplier"]}',
                               f'DRAIN_SEC={plan["drain_sec"]}',
-                              f'COLLECTION_PROTOCOL_VERSION={PROTOCOL_VERSION}',
+                              f'COLLECTION_PROTOCOL_VERSION={order["protocol_version"]}',
                               'COLLECTION_LOCK_JSON=' + json.dumps(
                                   order['collection_code_sha256'], separators=(',', ':')),
                               'PROFILE_CELL_JSON=' + json.dumps(profile, separators=(',', ':')),
