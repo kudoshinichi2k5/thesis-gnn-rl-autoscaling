@@ -612,6 +612,39 @@ class ExecutionLoggingTests(unittest.TestCase):
         driver = dict(self.log.summary(), planned=1, failed=1)
         profiling.validate_execution_artifacts(self.tmp.name, driver)
 
+    def test_transport_outcome_does_not_require_driver_exception(self):
+        self.start()
+        rid, mono = self.log.begin_request('one', 'GET', 'GET /')
+        response = types.SimpleNamespace(
+            status_code=0, history=[], url='http://fixture/',
+            request=types.SimpleNamespace(method='GET'),
+            error=ConnectionError('connection closed'),
+        )
+        self.log.finish_request(rid, mono, response=response)
+        # Locust may return a status=0 response object instead of raising it to
+        # the session greenlet.  This is measured transport telemetry, while the
+        # session itself completed normally.
+        self.log.finish_session('one')
+        self.log.writers['in_flight'].writerow(dict(timestamp=103, sessions_in_flight=0,
+                                                   requests_in_flight=0))
+        self.log.writers['loadgen_resources'].writerow(dict(timestamp=103,
+            node_cpu_busy_pct=50, node_mem_available_bytes=1000000,
+            process_rss_bytes=100000))
+        self.log.close()
+        driver = dict(self.log.summary(), planned=1, failed=0)
+        profiling.validate_execution_artifacts(self.tmp.name, driver)
+
+        sessions = self.rows('sessions')
+        sessions[0]['outcome'] = 'driver_exception'
+        sessions[0]['driver_error'] = 'TimeoutError'
+        with (Path(self.tmp.name) / 'sessions.csv').open('w', newline='', encoding='utf-8') as stream:
+            writer = csv.DictWriter(stream, fieldnames=sessions[0])
+            writer.writeheader(); writer.writerows(sessions)
+        with self.assertRaisesRegex(ValueError, 'evidence mismatch'):
+            profiling.validate_execution_artifacts(
+                self.tmp.name, dict(driver, driver_exceptions=1, failed=1)
+            )
+
     def test_onoff_ids_do_not_merge_events_from_same_source(self):
         self.ns['CONFIG'] = {'model': 'onoff'}
         self.event.update(kind='request', size=1)

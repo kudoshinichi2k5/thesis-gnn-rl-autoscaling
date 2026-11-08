@@ -20,6 +20,7 @@ import signal
 import subprocess
 import time
 import uuid
+from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 
@@ -701,19 +702,41 @@ def validate_execution_artifacts(root, driver):
             raise ValueError('invalid client request timing')
     if driver['driver_exceptions'] != driver['failed']:
         raise ValueError('driver exception counter mismatch')
-    exception_sessions = {
-        row['session_id'] for row in sessions if row.get('outcome') == 'driver_exception'
+    exception_rows = {
+        row['session_id']: row
+        for row in sessions if row.get('outcome') == 'driver_exception'
     }
     transport_requests = [
         row for row in requests
         if row.get('status') in ('', '0')
         and row.get('error') not in ('', 'right_censored')
     ]
-    transport_sessions = {row['session_id'] for row in transport_requests}
-    if (len(exception_sessions) != driver['driver_exceptions']
+    transport_by_session = defaultdict(list)
+    for row in transport_requests:
+        transport_by_session[row['session_id']].append(row)
+    unexplained = []
+    for session_id, session in exception_rows.items():
+        candidates = transport_by_session.get(session_id, ())
+        driver_error = session.get('driver_error', '')
+        if not candidates or (driver_error and not any(
+                request.get('error') in (driver_error, 'transport_error')
+                for request in candidates)):
+            unexplained.append(session_id)
+    # A Locust response can carry status=0/error without raising to the session
+    # greenlet.  Such a request is still a valid measured transport outcome and
+    # the session may finish normally.  The required relation is therefore
+    # driver-exception sessions ⊆ transport-error sessions, not equality.
+    if (len(exception_rows) != driver['driver_exceptions']
             or len(transport_requests) != driver.get('transport_errors')
-            or exception_sessions != transport_sessions):
-        raise ValueError('driver exception is not explained by logged transport outcome')
+            or unexplained):
+        raise ValueError(
+            'driver/transport evidence mismatch: '
+            f'exception_sessions={len(exception_rows)}, '
+            f'driver_exceptions={driver.get("driver_exceptions")}, '
+            f'transport_rows={len(transport_requests)}, '
+            f'transport_errors={driver.get("transport_errors")}, '
+            f'unexplained_sessions={unexplained}'
+        )
 
 
 def loadgen_failure_with_evidence(failure, root):

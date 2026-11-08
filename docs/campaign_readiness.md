@@ -669,3 +669,8 @@ Sau khi collection lock đổi, dùng output v6 mới và đăng ký order đún
   collector/analyzer/audit/docs chỉ chạy unit test và hồi quy tất định 3–5 campaign nếu
   cần; không ghi đè artifact 20-campaign.
 - Sau khi tag v6, chỉ lỗi an toàn hoặc toàn vẹn raw data mới được phép sửa collector.
+- **v6.1:** sửa duy nhất validator transport outcome. Locust có thể trả response
+  `status=0` đã được ghi đầy đủ nhưng không raise lên session greenlet; session đó hợp lệ
+  ở trạng thái `completed`. Validator vẫn bắt mọi `driver_exception` phải có transport
+  request cùng session và cùng loại lỗi, nhưng dùng quan hệ tập con thay vì buộc hai tập
+  bằng nhau. Không đổi load, schedule, logger, collector hay ngưỡng khoa học.
