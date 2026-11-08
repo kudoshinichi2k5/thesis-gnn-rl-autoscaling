@@ -254,5 +254,11 @@ def write_trace(trace, out_dir):
             w.writerow([r['t'], r['state'], round(r['lambda_sessions'], 5), round(r['expected_rps'], 5)])
     summary = {k: trace[k] for k in ('model', 'seed', 'duration', 'meta', 'expected_mean_rps', 'designed_mean_rps')}
     summary['n_events'] = len(trace['events'])
+    summary['rate_units'] = {
+        'expected_rps': 'expected top-level HTTP operations/second; excludes redirect hops; not realized RPS',
+        'lambda_sessions': ('active sources (legacy column name)' if trace['model'] == 'onoff'
+                            else 'sessions/second'),
+    }
+    summary['arrival_unit'] = 'request' if trace['model'] == 'onoff' else 'session'
     with open(os.path.join(out_dir, 'trace_meta.json'), 'w') as f:
         json.dump(summary, f, indent=1)
