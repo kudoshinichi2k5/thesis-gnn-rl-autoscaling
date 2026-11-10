@@ -1,5 +1,14 @@
 # thesis-gnn-rl-autoscaling
 
+> **Cập nhật 07/11/2026:** synthetic recovery v4 đã PASS toàn bộ gate cho thiết kế
+> focus-sweep 20/8/8 mới. Campaign thật vẫn **NO-GO** vì observation contract
+> (capture/own-time/downstream evidence) chưa được xác minh. Quyết định hiện hành nằm ở
+> [campaign_readiness.md](docs/campaign_readiness.md); mô tả recovery v3 bên dưới là lịch sử.
+
+> Trạng thái collection v2 (06/11/2026): **chưa chạy campaign chính thức**.
+> Xem [campaign readiness](docs/campaign_readiness.md) để dùng đúng protocol,
+> tách dữ liệu diagnostic và kiểm tra điều kiện nhận dạng Digital Twin.
+
 **Tối ưu hóa autoscaling chủ động cho ứng dụng microservices sử dụng mạng nơ-ron đồ thị và học tăng cường**
 *(Proactive autoscaling optimization for microservices applications using graph neural networks and reinforcement learning)*
 
@@ -12,6 +21,9 @@ Repo chứa toàn bộ hạ tầng dưới dạng code: tạo máy ảo, dựng 
 
 - Phạm vi hiện tại: **NHPP, MMPP, Pareto, ON/OFF; không curriculum; Jaeger sampling 10%**. Những mục khác trong đề cương/báo cáo tiến độ cũ được giữ như lịch sử.
 - RL theo [Digital Twin bán cơ chế có hiệu chỉnh xác suất](docs/RL_DESIGN_PLAN.md): workload trace, replica lifecycle, queue/backlog, CPU work-conservation và mixture-density latency. PPO vẫn bị chặn tới khi calibration validation đạt gate.
+- Audit collection v2 hiện kết luận **NO-GO cho campaign chính thức và PPO**: recovery
+  chưa nhận dạng được capacity `mu`, support replica2/3 còn thiếu và observation contract
+  thực chưa được xác minh. Quyết định chuẩn nằm trong [campaign readiness](docs/campaign_readiness.md).
 - [Bàn giao DL → RL](README_DL_TO_RL_HANDOFF.md) là nguồn cho contract model; [kế hoạch RL](docs/RL_DESIGN_PLAN.md) mô tả công việc tiếp theo.
 - [Notebook RL trên Kaggle](notebooks/rl/train_ppo_kaggle.ipynb) là artifact huấn luyện duy nhất; lịch sử surrogate v5–v16 không còn nằm trên đường chạy hiện tại.
 
@@ -231,9 +243,9 @@ $$\hat{Y}_{t+1:t+h} = f_\theta\left(\mathcal{G}_{t-w+1}, \dots, \mathcal{G}_t\ri
 
 | Thành phần | Định nghĩa đề xuất |
 |---|---|
-| **State** $s_t$ | RPS, CPU, RAM, P95, ready, pending, cooldown và backlog của năm service điều khiển; forecast RPS/CPU +30s và +60s; cùng `call_rate`, `call_ratio`, edge P95 của 15 cạnh theo topology tĩnh |
+| **State** $s_t$ | RPS, CPU, RAM, P95, trace count, ready, pending, cooldown, backlog và OOD score của năm service điều khiển; forecast RPS/CPU +30s/+60s; edge features; cùng `reward_p95_ema/SLO` để reward filter không là hidden state |
 | **Action** $a_t$ | `MultiDiscrete([3] * 5)`, mã `0/1/2` tương ứng delta `-1/0/+1` cho frontend, cartservice, currencyservice, productcatalogservice và recommendationservice. Miền hiệu chỉnh hiện tại là 1..3 |
-| **Reward** $r_t$ | Phạt bình phương phần P95 frontend vượt 300ms, error rate frontend, tổng replica, số lần đổi/đảo chiều action, action bị cooldown/biên chặn và mức OOD ngoài support profiling |
+| **Reward** $r_t$ | Bốn nhóm: SLA (P95/error frontend), resource (tổng replica), flapping (service thực sự đổi replica) và OOD. Reversal/blocked chỉ được log; P95 reward dùng EWMA `alpha=min(1,K/30)` với nhánh `K=0` chống NaN |
 | **Transition** | Digital Twin tách `ReplicaLifecycle`, `GraphLoadModel`, `InfrastructureDynamics` và `SurrogateObservationModel`: tải lan truyền caller→callee, Pod mới pending trước khi ready, queue/backlog bảo toàn work; lớp quan sát tái tạo sampling Jaeger 10% và feature X/E |
 | **Huấn luyện** | Lấy mẫu cân bằng **cả bốn scenario ngay từ đầu, không curriculum**. Giữ train/validation/test tách biệt; không dùng prediction test để train hoặc tune |
 | **Đầu ra** | Policy PPO, observation normalizer, cấu hình, seed và provenance. Dùng PyTorch/SB3 trước; ONNX/TorchScript là tùy chọn sau kiểm thử parity |

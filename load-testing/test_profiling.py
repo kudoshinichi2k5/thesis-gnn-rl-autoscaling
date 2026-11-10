@@ -31,14 +31,14 @@ class PlanTests(unittest.TestCase):
     def test_main_is_one_calibration_run_per_workload_cell(self):
         cells = profiling.plan_cells(self.main)
         self.assertEqual(self.main["protocol"], profiling.TWIN_PROTOCOL)
-        self.assertEqual(len(cells), 4 * 3 * 3)
+        self.assertEqual(len(cells), 27)
         self.assertEqual({cell["arm"] for cell in cells}, {"calibrate"})
         self.assertEqual(len({cell["cell_id"] for cell in cells}), len(cells))
         self.assertEqual({cell["split"] for cell in cells}, {"train", "validation", "test"})
         self.assertEqual(
             {split: sum(c["split"] == split for c in cells)
              for split in ("train", "validation", "test")},
-            {"train": 20, "validation": 8, "test": 8},
+            {"train": 11, "validation": 8, "test": 8},
         )
         focus_counts = {}
         for cell in (c for c in cells if c["split"] == "train"):
@@ -50,8 +50,10 @@ class PlanTests(unittest.TestCase):
                 self.assertLessEqual(len(changed), 1)
                 if changed:
                     self.assertEqual(changed, (cell["focus_service"],))
-        self.assertEqual(set(focus_counts), set(self.main["controlled_services"]))
-        self.assertEqual(set(focus_counts.values()), {4})
+        self.assertEqual(focus_counts, {
+            'frontend': 4, 'currencyservice': 4, 'cartservice': 1,
+            'productcatalogservice': 1, 'recommendationservice': 1,
+        })
 
         for cell in (c for c in cells if c["split"] != "train"):
             self.assertEqual(cell["transition_design"], "joint_constrained_random_walk")
@@ -104,7 +106,10 @@ class PlanTests(unittest.TestCase):
         diagnostic = profiling.load_plan(HERE / "profiling-plan.json", "diagnostic")
         self.assertEqual(self.main["max_concurrent"], 2000)
         self.assertEqual(diagnostic["max_concurrent"], 1000)
-        self.assertEqual(max(self.main["load_multipliers"]), 2.5)
+        self.assertEqual(self.main['safe_scenario_multipliers'], {
+            'mmpp': 0.5, 'nhpp': 0.75, 'onoff': 1.25,
+            'pareto': 2.4649420542587386,
+        })
         self.assertEqual(diagnostic['scenario_load_multipliers'], {
             'mmpp': 0.5, 'nhpp': 0.75, 'onoff': 1.25,
         })
@@ -116,6 +121,47 @@ class PlanTests(unittest.TestCase):
         wrapper = (HERE / 'run-profile-loadgen.sh').read_text()
         self.assertIn('REQUIRED_NOFILE=$((MAX_CONCURRENT + 256))', wrapper)
         self.assertIn('ulimit -Sn "$REQUIRED_NOFILE"', wrapper)
+
+    def test_v62_envelope_rejects_legacy_high_load_and_accepts_new_cells(self):
+        cells = profiling.execution_cells(self.main)
+        self.assertEqual(len(cells), 30)
+        self.assertTrue(cells[0].get('safety_canary'))
+        self.assertEqual(cells[0]['scenario'], 'pareto')
+        self.assertEqual(self.main['pareto_peak_target_rps'], 50.0)
+        for cell in cells:
+            evidence = profiling.cell_envelope_evidence(self.main, cell)
+            self.assertLessEqual(evidence['designed_peak_frontend_rps'], 60)
+            self.assertLessEqual(evidence['worst_rho_peak'], 1.3)
+            if (cell['scenario'] == 'pareto'
+                    and cell['load_multiplier'] == self.main['safe_scenario_multipliers']['pareto']):
+                self.assertAlmostEqual(
+                    evidence['designed_peak_frontend_rps'],
+                    self.main['pareto_peak_target_rps'], places=9,
+                )
+        template = next(cell for cell in cells if cell['scenario'] == 'nhpp')
+        for multiplier in (2.0, 2.5):
+            legacy = dict(template, load_multiplier=multiplier, cell_id=f'legacy-{multiplier}')
+            with self.subTest(multiplier=multiplier), self.assertRaisesRegex(
+                    ValueError, 'envelope rejected'):
+                profiling.cell_envelope_evidence(self.main, legacy)
+
+    def test_v62_canary_must_complete_as_a_one_cell_checkpoint(self):
+        cells = profiling.execution_cells(self.main)
+        canary_id = cells[0]['cell_id']
+        profiling.validate_v62_canary_checkpoint(
+            self.main, cells, cells, set(), 1
+        )
+        with self.assertRaisesRegex(ValueError, '--max-new 1'):
+            profiling.validate_v62_canary_checkpoint(
+                self.main, cells, cells, set(), 2
+            )
+        with self.assertRaisesRegex(ValueError, 'cannot be skipped'):
+            profiling.validate_v62_canary_checkpoint(
+                self.main, cells, cells[1:], set(), 1
+            )
+        profiling.validate_v62_canary_checkpoint(
+            self.main, cells, cells[1:], {canary_id}, 29
+        )
 
     def test_invalid_domains_fail_closed(self):
         mutations = {
@@ -205,6 +251,9 @@ class CliTests(unittest.TestCase):
         main_args = profiling.parse_args(["--profile", "main"])
         smoke_args = profiling.parse_args(["--profile", "smoke"])
         self.assertNotEqual(main_args.output, smoke_args.output)
+        self.assertTrue(main_args.output.endswith(
+            'digital-twin-calibration-v2-official-v6-2'
+        ))
         self.assertEqual(main_args.max_new, 1)
         with patch.object(profiling, "command", side_effect=AssertionError("cluster call")), \
              patch.object(profiling.subprocess, "run", side_effect=AssertionError("process call")), \
@@ -274,7 +323,7 @@ class CliTests(unittest.TestCase):
 
     def test_filters_do_not_mutate_the_study(self):
         args = profiling.parse_args(["--scenario", "nhpp", "--split", "train",
-                                     "--load-multiplier", "1.5", "--repeat", "0"])
+                                     "--load-multiplier", "0.75", "--repeat", "0"])
         with patch.object(profiling, "command", side_effect=AssertionError("cluster call")), \
              redirect_stdout(io.StringIO()):
             profiling.run(args)
@@ -298,6 +347,40 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("synthetic_recovery.py", hashes)
         self.assertNotIn("test_profiling.py", hashes)
 
+    def test_registered_order_locks_trace_definitions_separately(self):
+        trace_hashes = profiling.trace_definition_hashes()
+        self.assertEqual(set(trace_hashes), {
+            'arrival_models.py', 'scenarios/mmpp.py', 'scenarios/nhpp.py',
+            'scenarios/onoff.py', 'scenarios/pareto.py',
+        })
+        plan = profiling.load_plan(HERE / 'profiling-plan.json', 'main')
+        order = profiling.registered_order(
+            plan, plan['max_concurrent'], HERE / 'profiling-plan.json'
+        )
+        self.assertEqual(order['trace_definition_sha256'], trace_hashes)
+        with patch.object(profiling, 'trace_definition_hashes',
+                          return_value=dict(trace_hashes, **{'arrival_models.py': 'changed'})):
+            changed = profiling.registered_order(
+                plan, plan['max_concurrent'], HERE / 'profiling-plan.json'
+            )
+        self.assertNotEqual(order['order_sha256'], changed['order_sha256'])
+
+    def test_live_cpu_limits_must_match_registered_envelope(self):
+        plan = profiling.load_plan(HERE / 'profiling-plan.json', 'main')
+        self.assertEqual(profiling.cpu_quantity_cores('500m'), 0.5)
+        self.assertEqual(profiling.cpu_quantity_cores('1000000u'), 1.0)
+        deployments = {}
+        for service, limit in plan['envelope_gate']['cpu_limit_cores_per_pod'].items():
+            deployments[service] = {'spec': {'template': {'spec': {'containers': [{
+                'name': 'server', 'resources': {'limits': {'cpu': f'{limit:g}'}},
+            }]}}}}
+        profiling.validate_envelope_cpu_limits(plan, deployments)
+        deployments['frontend']['spec']['template']['spec']['containers'][0][
+            'resources']['limits']['cpu'
+        ] = '600m'
+        with self.assertRaisesRegex(RuntimeError, 'differs from registered envelope'):
+            profiling.validate_envelope_cpu_limits(plan, deployments)
+
     def test_analyzer_failure_preserves_collected_run_and_resume_identity(self):
         plan = profiling.load_plan(HERE / "profiling-plan.json", "main")
         cell = profiling.execution_cells(plan)[0]
@@ -311,6 +394,9 @@ class CliTests(unittest.TestCase):
                  redirect_stdout(io.StringIO()):
                 result = profiling.analyze_collected(root, plan)
             self.assertEqual(result["failed"], 1)
+            self.assertEqual(result["safety_censored"], 1)
+            self.assertTrue(any(row.get('exclude_from_fit') is True
+                                for row in result['results']))
             self.assertTrue(run.is_dir())
             self.assertFalse((root / "_incomplete").exists())
             with patch.object(profiling, "validate_run", return_value=({}, {})):
@@ -416,8 +502,12 @@ class CliTests(unittest.TestCase):
             self.assertEqual(estimate["smoke_samples"], 1)
             self.assertEqual(estimate["covered_scenarios"], ["nhpp"])
             self.assertGreater(estimate["exported_bytes"], 0)
+            max_multiplier = max(
+                cell['load_multiplier'] for cell in profiling.execution_cells(
+                    profiling.load_plan(HERE / 'profiling-plan.json', 'main'))
+            )
             self.assertEqual(estimate["jaeger_peak_bytes"],
-                             (600 / 600) / 0.5 * 2.5 * 3 * 3600 * 3)
+                             (600 / 600) / 0.5 * max_multiplier * 3 * 3600 * 3)
 
     def test_storage_estimate_scales_low_load_smoke_to_main_cells(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -700,6 +790,26 @@ class ExecutionLoggingTests(unittest.TestCase):
 
 
 class CalibrationV2Tests(unittest.TestCase):
+    def test_analyzer_accepts_zero_status_final_transport_hop(self):
+        from calibration import parse_client_records
+        base=dict(request_id='1',t_start='1',t_end='2',latency_ms='1000',
+                  error='transport_error',endpoint='GET /',method='GET')
+        transport=dict(base,status='0',redirect_count='0',
+                       redirect_chain='[{"path":"/","method":"GET","status":0}]')
+        record=parse_client_records([transport])[0]
+        self.assertEqual(record['status'],0)
+        self.assertEqual(record['redirect_count'],0)
+        redirect=dict(base,status='200',redirect_count='1',error='',
+                      redirect_chain=('[{"path":"/old","method":"GET","status":302},'
+                                      '{"path":"/","method":"GET","status":200}]'))
+        self.assertEqual(parse_client_records([redirect])[0]['redirect_count'],1)
+        inconsistent=dict(transport,redirect_count='1')
+        with self.assertRaisesRegex(ValueError,'redirect evidence mismatch'):
+            parse_client_records([inconsistent])
+        wrong_status=dict(transport,status='200')
+        with self.assertRaisesRegex(ValueError,'final-hop status mismatch'):
+            parse_client_records([wrong_status])
+
     def test_diagnostic_contract_is_scoped_to_its_focus_service(self):
         from calibration import observation_contract_services
         self.assertEqual(observation_contract_services(dict(
@@ -738,6 +848,24 @@ class CalibrationV2Tests(unittest.TestCase):
         self.assertEqual(required_resource_coverage('cartservice',('cartservice',)),.90)
         self.assertEqual(required_resource_coverage('checkoutservice',('cartservice',)),.75)
 
+    def test_resource_window_fallback_requires_three_measured_10s_samples(self):
+        from calibration import aggregate_resource_window
+        rows=[dict(timestamp=str(timestamp),service='frontend',cpu_cores=str(cpu),
+                   cpu_limit_cores='0.5',cpu_throttle_ratio=str(throttle))
+              for timestamp,cpu,throttle in
+              ((10,.1,.01),(20,.2,.02),(30,.3,.03))]
+        result=aggregate_resource_window(rows,'frontend',0,30)
+        self.assertAlmostEqual(result['cpu_cores'],.2)
+        self.assertAlmostEqual(result['cpu_limit_cores'],.5)
+        self.assertAlmostEqual(result['cpu_throttle_ratio'],.02)
+        self.assertIsNone(aggregate_resource_window(rows[:2],'frontend',0,30))
+        broken=[dict(row) for row in rows]
+        broken[1]['cpu_cores']=''
+        self.assertIsNone(aggregate_resource_window(broken,'frontend',0,30))
+        gapped=[dict(row) for row in rows]
+        gapped[2]['timestamp']='31.5'
+        self.assertIsNone(aggregate_resource_window(gapped,'frontend',0,31.5))
+
     def test_drop_counter_parsing_never_assumes_absent_is_zero(self):
         self.assertEqual(profiling.span_drop_counters('unrelated_metric 3'),{})
         self.assertEqual(profiling.span_drop_counters('jaeger_collector_spans_dropped_total{svc="x"} 2'),
@@ -753,7 +881,7 @@ class CalibrationV2Tests(unittest.TestCase):
             args.max_concurrent+=1
             with self.assertRaisesRegex(ValueError,'differs'): profiling.run(args)
 
-    def test_v61_accepts_only_the_registered_v6_validator_only_transition(self):
+    def test_v62_refuses_legacy_validator_only_order_compatibility(self):
         plan = profiling.load_plan(HERE / 'profiling-plan.json', 'main')
         candidate = profiling.registered_order(
             plan, plan['max_concurrent'], HERE / 'profiling-plan.json'
@@ -768,7 +896,7 @@ class CalibrationV2Tests(unittest.TestCase):
         registered['order_sha256'] = profiling.digest({
             key: value for key, value in registered.items() if key != 'order_sha256'
         })
-        self.assertTrue(profiling.validator_only_order_compatible(
+        self.assertFalse(profiling.validator_only_order_compatible(
             registered, candidate
         ))
         changed_collector = copy.deepcopy(registered)
@@ -875,10 +1003,12 @@ class CalibrationV2Tests(unittest.TestCase):
     def test_order_controls_and_registration(self):
         plan=profiling.load_plan(HERE/'profiling-plan.json','main')
         cells=profiling.execution_cells(plan)
-        self.assertEqual(len(cells),39)
+        self.assertEqual(len(cells),30)
         controls=[c for c in cells if c.get('role')=='drift_control']
-        self.assertEqual([cells.index(c) for c in controls],[0,19,38])
-        self.assertEqual(len({c['cell_id'] for c in cells}),39)
+        self.assertEqual([cells.index(c) for c in controls],[1,15,29])
+        self.assertEqual(len({c['cell_id'] for c in cells}),30)
+        self.assertTrue(cells[0].get('safety_canary'))
+        self.assertEqual(cells[0]['scenario'],'pareto')
         self.assertEqual(controls[0]['schedule'],controls[2]['schedule'])
         self.assertEqual(controls[0]['seed'],controls[2]['seed'])
         self.assertEqual(cells,profiling.execution_cells(plan))

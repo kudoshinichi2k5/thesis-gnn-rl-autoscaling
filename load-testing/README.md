@@ -1,5 +1,19 @@
 # Load testing và thu raw dataset
 
+> **Cập nhật 07/11/2026:** main dùng 36 study run theo split 20 train / 8 validation /
+> 8 test và 3 drift control. Mỗi run chỉ sweep một focus service, bốn service điều khiển
+> còn lại được ghim ở guard capacity;
+> synthetic recovery v4 PASS nhưng collection thật vẫn NO-GO đến khi observation contract
+> được xác minh. Xem [campaign_readiness.md](../docs/campaign_readiness.md). Phần mô tả
+> “quét năm service + joint” bên dưới là protocol cũ.
+
+> **Trạng thái 06/11/2026: NO-GO cho thu chính thức.** Pipeline calibration v2 và
+> kiểm thử cục bộ đang thay thế protocol cũ. Đọc
+> [campaign_readiness.md](../docs/campaign_readiness.md) và
+> [data_pipeline_spec.md](../docs/data_pipeline_spec.md) trước khi chạy.
+> Main hiện có36 study +3 drift control; smoke/diagnostic bị loại khỏi dữ liệu học.
+> Cần đăng ký order/code hash; không chạy lại lệnh v1 bên dưới như lệnh v2 đã được duyệt.
+
 ## Thu dữ liệu hiệu chỉnh Digital Twin
 
 Thiết kế và nguồn khoa học: [RL_DESIGN_PLAN.md](../docs/RL_DESIGN_PLAN.md).
@@ -9,10 +23,14 @@ Chỉ có một entry point: **`run-profiling.py`**; cấu hình nằm trong
 thu raw server spans, kiểm tra dữ liệu và xuất manifest có hash. Helper
 `run-profile-loadgen.sh` chỉ được controller gọi nội bộ.
 
+> Lệnh vận hành đầy đủ (ba SSH target, NTP/disk guard, smoke, resume và thời gian dự kiến)
+> nằm tại [`docs/campaign_readiness.md`](../docs/campaign_readiness.md).
+> Các lệnh rút gọn cũ chỉ có `--ssh-target` không còn đủ cho live preflight.
+
 | Profile | Mục đích | Ngân sách đầy đủ |
 |---|---|---|
-| `smoke` | ON/OFF tải 0.5, `recommendationservice` 1→2→3→1 | 1 run đầu tiên khoảng 10 phút |
-| `main` | 4 scenario × 3 mức tải × train/validation/test | 36 run × 35 phút = 21 giờ tải, chưa tính overhead |
+| `smoke` | 4 scenario tải 0.5, `recommendationservice` 1→2→3→1 | 4 run train × (10 phút đo + 2 phút drain) |
+| `main` | 36 study run + 3 drift control | 39 execution × 35 phút = 22.75 giờ tải, chưa tính overhead; hiện bị khóa NO-GO |
 
 Mỗi run quét tuần tự 1→2→3→1 cho năm service được PPO điều khiển, sau đó đo một
 cấu hình joint hai service. Thứ tự service được xáo trộn theo seed nhưng tái lập được.
@@ -21,6 +39,9 @@ một cặp; surrogate nhận thêm tổng replica của cluster để nhận bi
 Đây không phải Cartesian lookup table và không dùng MLP sinh toàn bộ next-state.
 Sampling luôn **10%**, Redis cố định một replica và HPA phải tắt. Validator yêu cầu
 target thật sự Available trước action kế tiếp; một lệnh scale thành công chưa đủ.
+Sau cửa sổ đo, Locust dành 120 giây chỉ để drain session đang chạy; khoảng drain không
+được đưa vào telemetry fit. Run chỉ hợp lệ khi `planned=started=completed`, đồng thời
+`dropped=failed=unfinished=0` và coverage frontend đạt gate đã khóa trong plan.
 
 ### Contract dữ liệu bắt buộc cho Digital Twin
 
@@ -51,22 +72,27 @@ nạp bằng `ssh-add` trước khi chạy controller vì controller dùng SSH `
 # 1. Preview smoke, không tác động cluster.
 python3 load-testing/run-profiling.py --profile smoke
 
-# 2. Chạy đúng một smoke run; thay host/key.
-python3 load-testing/run-profiling.py --profile smoke --confirm --max-new 1 \
-  --ssh-target ubuntu@LOADGEN_IP --ssh-key /path/to/kltn_autoscaling
+# 2. Chạy bốn smoke train, mỗi scenario một run; thay host/key.
+python3 -u -B load-testing/run-profiling.py --profile smoke --split train --confirm --resume --max-new 4 \
+  --ssh-target ubuntu@LOADGEN_IP \
+  --observability-ssh-target ubuntu@OBSERVABILITY_IP \
+  --k3s-ssh-target ubuntu@K3S_CONTROL_PLANE_IP \
+  --ssh-key /path/to/kltn_autoscaling
 
-# 3. Khi đủ ba split smoke mới có thể export; smoke chỉ kiểm tra pipeline.
-python3 load-testing/run-profiling.py --profile smoke \
-  --export dataset/digital-twin-smoke-v1/digital_twin_manifest.json
+# 3. Không thu validation/test cho smoke. Sau bốn train run, checkpoint `paused`
+# với completed_count=4/total_count=12 là đúng vì filter chỉ chọn split train.
 
-# 4. Sau khi smoke đạt, preview campaign chính: phải có đúng 36 cell.
+# 4. Sau khi cả bốn smoke đạt, preview campaign chính: phải có đúng 36 cell.
 python3 load-testing/run-profiling.py --profile main
 
 # 5. Chạy đúng một campaign dài. Validator kiểm tra từng run và dừng khi có lỗi.
 mkdir -p dataset/digital-twin-calibration-v1
 set -o pipefail
-python3 load-testing/run-profiling.py --profile main --confirm --max-new 36 \
-  --ssh-target ubuntu@LOADGEN_IP --ssh-key /path/to/kltn_autoscaling \
+python3 load-testing/run-profiling.py --profile main --confirm --resume --max-new 36 \
+  --ssh-target ubuntu@LOADGEN_IP \
+  --observability-ssh-target ubuntu@OBSERVABILITY_IP \
+  --k3s-ssh-target ubuntu@K3S_CONTROL_PLANE_IP \
+  --ssh-key /path/to/kltn_autoscaling \
   2>&1 | tee dataset/digital-twin-calibration-v1/controller-campaign.log
 
 # 6. Xuất manifest hoàn chỉnh; missing_cells phải rỗng.
@@ -302,7 +328,7 @@ Trước mỗi run, script đọc `max(kube_deployment_spec_replicas)` từ Prom
 | `COOLDOWN_SEC` | `120` | Nghỉ sau mỗi run để request tồn đọng xử lý xong (trước bước chờ replica) |
 | `REPLICA_WAIT_MAX_SEC` | `1200` | Thời gian chờ tối đa để mọi deployment về 1 replica trước mỗi run |
 | `SEED_BASE` | `1000` | Seed của `run_k` = `SEED_BASE + k`. Run cùng số thứ tự sinh **cùng trace**, nên các phương pháp autoscaling so sánh được theo cặp |
-| `MAX_CONCURRENT` | `400` | Số phiên/request đồng thời tối đa trên loadgen 1 vCPU. Arrival vượt mức bị **bỏ và đếm** trong `driver_report.json` |
+| `MAX_CONCURRENT` | `400` khi chạy driver trực tiếp | Số phiên/request đồng thời tối đa. Profiling controller lấy ngân sách đã version hóa theo profile: smoke `400`, diagnostic `1000`, main `2000`; CLI `--max-concurrent` chỉ dùng như override có chủ đích và làm thay đổi campaign order. Arrival vượt mức vẫn bị **bỏ và đếm**, khiến run fail closed. |
 | `RESULTS_DIR` | `dataset/raw` | Thư mục kết quả. Đặt thư mục riêng cho mỗi phương pháp trong thực nghiệm cuối, khi đó run thứ k của mọi phương pháp có cùng seed |
 | `STEP_SEC` | `10` | Bước lưới khi xuất telemetry |
 

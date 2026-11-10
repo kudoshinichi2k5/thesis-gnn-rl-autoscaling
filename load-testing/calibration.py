@@ -5,7 +5,7 @@ No cluster calls. Used by the collector, tests and synthetic recovery study.
 import argparse
 import csv
 import hashlib
-import inspect
+import inspectx
 import json
 import math
 import random
@@ -280,6 +280,27 @@ def measured_float(row, field):
     return number if math.isfinite(number) and number >= 0 else None
 
 
+def aggregate_resource_window(rows, service, begin, end):
+    """Return a measured 30s resource window from three complete 10s samples.
+
+    This is a provenance-preserving fallback for an absent aligned range-query
+    value.  It never forward-fills or substitutes a plan target: every returned
+    field is the mean of the three raw measurements inside the same window.
+    """
+    samples=[row for row in rows if row.get('service')==service
+             and begin<float(row['timestamp'])<=end]
+    if len(samples)!=3:
+        return None
+    timestamps=sorted(float(row['timestamp']) for row in samples)
+    if any(not 9<=b-a<=11 for a,b in zip(timestamps,timestamps[1:])):
+        return None
+    fields=('cpu_cores','cpu_limit_cores','cpu_throttle_ratio')
+    parsed={field:[measured_float(row,field) for row in samples] for field in fields}
+    if any(any(value is None for value in values) for values in parsed.values()):
+        return None
+    return {field:statistics.fmean(values) for field,values in parsed.items()}
+
+
 def required_resource_coverage(service, controlled_services):
     return (RULES['min_controlled_resource_coverage']
             if service == 'frontend' or service in set(controlled_services)
@@ -417,6 +438,49 @@ def estimator_sha256():
     ).encode()).hexdigest()
 
 
+def parse_client_records(clients):
+    """Parse request rows and validate redirect/transport-hop evidence.
+
+    The collector records ``history + final response``.  A transport response can
+    therefore produce one final hop whose HTTP status is zero.  Hop existence must
+    be inferred from the recorded chain, never from truthiness of the status code.
+    """
+    records=[]
+    for index,r in enumerate(clients):
+        request_id=r.get('request_id',str(index+1))
+        try:
+            chain=json.loads(r.get('redirect_chain') or '[]')
+        except (TypeError,json.JSONDecodeError) as exc:
+            raise ValueError(f'invalid redirect evidence for request {request_id}') from exc
+        if not isinstance(chain,list) or any(not isinstance(hop,dict) for hop in chain):
+            raise ValueError(f'invalid redirect evidence for request {request_id}')
+        try:
+            redirect_count=(int(r['redirect_count'])
+                            if r.get('redirect_count') not in (None,'')
+                            else max(0,len(chain)-1))
+        except (TypeError,ValueError):
+            raise ValueError(f'invalid redirect count for request {request_id}') from None
+        if redirect_count<0 or len(chain)!=redirect_count+(1 if chain else 0):
+            raise ValueError(f'redirect evidence mismatch for request {request_id}: '
+                             f'{len(chain)} != {redirect_count+(1 if chain else 0)}')
+        raw_status=r.get('status')
+        try:
+            status=(int(raw_status) if raw_status not in (None,'') else
+                    int(chain[-1].get('status') or 0) if chain else 0)
+            final_hop_status=int(chain[-1].get('status') or 0) if chain else 0
+        except (TypeError,ValueError):
+            raise ValueError(f'invalid status evidence for request {request_id}') from None
+        if status!=final_hop_status:
+            raise ValueError(f'final-hop status mismatch for request {request_id}: '
+                             f'{status} != {final_hop_status}')
+        records.append(dict(request_id=request_id,
+            t_start=float(r['t_start']),t_end=float(r['t_end']) if r['t_end'] else None,
+            latency_ms=float(r['latency_ms']) if r['latency_ms'] else None,
+            error=bool(r['error']),status=status,endpoint=r['endpoint'],
+            redirect_count=redirect_count,redirect_chain=r.get('redirect_chain','')))
+    return records
+
+
 def analyze(root):
     root=Path(root)
     meta=json.loads((root/'meta.json').read_text())
@@ -424,23 +488,7 @@ def analyze(root):
     origin, duration=driver['trace_start_epoch'], meta['duration_sec']
     clients=read_csv(root/'client_requests.csv')
     sessions=read_csv(root/'sessions.csv')
-    records=[]
-    for index,r in enumerate(clients):
-        chain=json.loads(r.get('redirect_chain') or '[]')
-        redirect_count=(int(r['redirect_count']) if r.get('redirect_count') not in (None,'')
-                        else max(0,len(chain)-1))
-        records.append(dict(request_id=r.get('request_id',str(index+1)),
-            t_start=float(r['t_start']),t_end=float(r['t_end']) if r['t_end'] else None,
-            latency_ms=float(r['latency_ms']) if r['latency_ms'] else None,
-            error=bool(r['error']), status=int(r.get('status') or (200 if chain else 0)),
-            endpoint=r['endpoint'],redirect_count=redirect_count,
-            redirect_chain=r.get('redirect_chain','')))
-    for record in records:
-        chain=json.loads(record['redirect_chain'] or '[]')
-        expected_hops=record['redirect_count']+(1 if record['status'] else 0)
-        if len(chain)!=expected_hops:
-            raise ValueError(f'redirect evidence mismatch for request {record["request_id"]}: '
-                             f'{len(chain)} != {expected_hops}')
+    records=parse_client_records(clients)
     journal=[json.loads(line) for line in (root/'capacity_events.jsonl').read_text().splitlines()]
     windows=window_rows(records,origin,duration)
     intervals=[(float(r['actual_start_ts']),float(r['end_ts']) if r['end_ts'] else None)
@@ -537,8 +585,24 @@ def analyze(root):
     sampling = meta['profiling'].get('sampling_percentage', 10) / 100
     capture_contract = infer_capture_contract(capture, raw, sampling)
     aliases=aliasing(read_csv(root/'cpu_counter_10s.csv')) if (root/'cpu_counter_10s.csv').exists() else []
-    node={(round(float(r['window_end']),3),r['service']):r
-          for r in read_csv(root/'node_windows_30s.csv')}
+    raw_node_metrics=(read_csv(root/'node_metrics.csv')
+                      if (root/'node_metrics.csv').exists() else [])
+    node={}
+    for resource in read_csv(root/'node_windows_30s.csv'):
+        resource=dict(resource)
+        fields=('cpu_cores','cpu_limit_cores','cpu_throttle_ratio')
+        missing_fields=[field for field in fields
+                        if measured_float(resource,field) is None]
+        resource['resource_measurement_source']='node_windows_30s'
+        if missing_fields:
+            end=float(resource['window_end'])
+            fallback=aggregate_resource_window(
+                raw_node_metrics,resource['service'],end-30,end)
+            if fallback is not None:
+                for field in missing_fields:
+                    resource[field]=fallback[field]
+                resource['resource_measurement_source']='node_metrics_10s_mean'
+        node[(round(float(resource['window_end']),3),resource['service'])]=resource
     cart_operations=[]
     grouped_cart=defaultdict(list)
     for span in raw:
@@ -639,6 +703,7 @@ def analyze(root):
             focus_service=meta['profiling'].get('focus_service'),
             replicas=journal_replicas,replicas_source='capacity_events_available',
             replicas_prometheus=prometheus_replicas,
+            resource_measurement_source=(n.get('resource_measurement_source') if n else None),
             cpu_cores=cpu_cores,cpu_limit_cores=cpu_limit,cpu_throttle_ratio=throttle,
             R_real=r['R_real'],R_obs=r['R_obs'],p_dynamic=r['p_dynamic'],
             sampling_probability=(None if r['count_source']=='client' else p_for_ht),

@@ -1,6 +1,6 @@
 # Readiness thu dữ liệu Digital Twin
 
-Cập nhật 08/11/2026. Đây là **tài liệu duy nhất cần review** trước khi chạy profiling
+Cập nhật 09/11/2026. Đây là **tài liệu duy nhất cần review** trước khi chạy profiling
 trên cluster. Nếu tài liệu khác mâu thuẫn với file này thì dừng campaign và đối chiếu
 code/plan, không chọn ngưỡng thuận lợi hơn.
 
@@ -13,10 +13,14 @@ có bằng chứng request tương ứng vẫn bị loại. Raw `meta.json` khô
 
 ## 1. Kết luận hiện tại
 
-**Protocol thu dữ liệu v6 đã được đóng băng. Smoke và diagnostic v5 đã PASS về vận hành.
-Campaign chính được mở theo các gate vận hành ở mục 8; kết quả capture/capacity là đầu ra
-phân tích hậu thu và không còn chặn việc thu raw data. `mu=None` là kết quả fail-closed
-hợp lệ, không phải lý do tự động chạy lại workload.**
+**Protocol v6/v6.1 đã dừng sau khi cell NHPP 2.5x chạm safety guard P95. Amendment v6.2
+đã khóa miền designed frontend peak ≤60 RPS và `rho_peak≤1.3`; chưa được chạy cluster.
+Chỉ bắt đầu output v6.2 mới sau khi Pareto canary, order mới và preflight đạt. Kết quả
+capture/capacity vẫn là phân tích hậu thu; `mu=None` là kết quả fail-closed hợp lệ.**
+
+Đặc tả amendment, bằng chứng overload, order/hash và danh sách 30 cell nằm tại
+[`docs/protocol_v6_2.md`](protocol_v6_2.md). Chín raw run v6 hợp lệ và cell
+`a07f68ae687557f67d50` safety-censored được giữ nguyên, không retry và không nhập fit v6.2.
 
 Không thể cam kết trước rằng dữ liệu thật sẽ làm mọi `mu` được nhận dạng hoặc PPO về sau
 sẽ thắng baseline. Thiết kế đúng ở đây có nghĩa là: tạo excitation có kiểm soát, giữ
@@ -45,8 +49,9 @@ phân tích lại bản rsync.
 ### Ngân sách concurrency của load generator
 
 Concurrency là một phần của protocol, không còn dùng mặc định `400` cho mọi mức tải.
-Smoke 0.5x dùng 400, diagnostic v5 dùng concurrency 1000 và main hiện vẫn khóa với trần
-2.5x/2000. Diagnostic không còn dùng một multiplier chung: MMPP 0.5x (peak 45 RPS),
+Smoke 0.5x dùng 400, diagnostic v5 dùng concurrency 1000 và main v6.2 giữ trần driver
+2000 nhưng không dùng nó để hợp thức hóa tải cao. Cổng envelope chạy trước từng cell:
+designed peak phải ≤60 RPS và `rho_peak≤1.3`. MMPP 0.5x (peak 45 RPS),
 NHPP 0.75x (peak khoảng 57 RPS), ON/OFF 1.25x (peak khoảng 60 RPS). Các mức này khóa
 theo peak của trace seed 7600, không theo mean hoặc multiplier đơn thuần. Cấu hình này
 được khóa trong `profiling-plan.json` và campaign order. Lần diagnostic đầu đã chứng
@@ -73,7 +78,7 @@ bằng chứng protocol selection, không nhập dataset fit.
 
 | Yêu cầu đầu vào | Quyết định đã cài đặt |
 |---|---|
-| Train 20 run cô lập; validation/test joint 8+8 | **Đúng.** Train giữ focus sweep và ghim cả bốn service điều khiển không phải focus ở guard capacity; validation/test dùng constrained random walk deterministic trên `[1,3]^5`, ít nhất hai service đổi đồng thời, tổng Pod không vượt 17. |
+| Train nhận dạng và non-bottleneck; validation/test joint 8+8 | **v6.2.** Train gồm 8 run nhận dạng frontend/currency trên bốn workload và 3 run kiểm tra không-nghẽn. Validation/test dùng constrained random walk deterministic trên `[1,3]^5`, ít nhất hai service đổi đồng thời, tổng Pod không vượt 17. |
 | Kubernetes Scheduling Framework là hàng đợi tuần tự toàn bộ | **Sửa lại.** Chỉ queue/binding được tuần tự hóa gần đúng; image pull và container startup có thể chồng lấp. Synthetic lifecycle lưu `queueing + binding + pull + startup`; dữ liệu thật chỉ tuyên bố tổng command→Available nếu không có event đủ chi tiết. |
 | Diagnostic đạt thì nhập vào train | **Không chấp nhận.** Diagnostic dùng để chọn protocol nên không được nhập hồi tố vào official train. Việc trộn sẽ gây protocol-selection leakage. |
 | `R_real` cho mọi microservice lấy từ Locust | **Sai.** Locust chỉ quan sát trực tiếp frontend. Internal `R_real` không được bịa; giữ trống/fail closed. Internal throughput hiện dùng Horvitz–Thompson `R_obs/0.10` kèm capture gate. |
@@ -85,13 +90,13 @@ bằng chứng protocol selection, không nhập dataset fit.
 
 ### 3.1 Official study
 
-Main gồm **36 study run + 3 drift-control = 39 execution**, mỗi execution 35 phút:
+Main v6.2 gồm **27 study run + 3 drift-control = 30 execution**, mỗi execution 35 phút:
 
-- Train: 20 run = 4 workload × 5 focus service. Mỗi run chỉ sweep focus service
-  `1→2→3→1`; caller/callee khác dùng guard replicas.
-- Validation: 8 run = 4 workload × tải 0.5/2.0; replica trajectory joint.
-- Test: 8 run = 4 workload × tải 0.5/2.0; replica trajectory joint và được niêm phong.
-- Drift control: 3 run MMPP 1.0 ở đầu/giữa/cuối; không fit estimator.
+- Train nhận dạng: frontend và currency × 4 workload = 8 run, sweep `1→2→3→1`.
+- Train không-nghẽn: cart/ON-OFF, product/Pareto, recommendation/NHPP = 3 run.
+- Validation: 8 run = 4 workload × `{0.5,1.0}` hệ số an toàn; trajectory joint.
+- Test: 8 run cùng cấu trúc validation, seed riêng và được niêm phong.
+- Drift control: 3 run MMPP 0.5x; không fit estimator.
 - Action space: `frontend`, `cartservice`, `currencyservice`,
   `productcatalogservice`, `recommendationservice`; mỗi service 1–3 replica; budget 17.
 - Joint schedule là constrained random walk, không phải Cartesian product. Mỗi target
@@ -99,8 +104,8 @@ Main gồm **36 study run + 3 drift-control = 39 execution**, mỗi execution 35
 - Action nhiều service được gửi gần đồng thời; không gọi tuần tự `kubectl scale` làm sai
   joint intervention.
 
-Tổng tải thật là 22.75 giờ; wall-clock dự kiến 26–31 giờ do settle, cooldown, export và
-validation. Đây không phải 23 giờ dữ liệu liên tục của một run.
+Tổng tải thật là 17.5 giờ; tối thiểu khoảng 19.25 giờ kể cả settle/cooldown và wall-clock
+dự kiến 21–24 giờ do export/validation. Pareto productcatalog canary luôn chạy đầu tiên.
 
 ### 3.2 Diagnostic
 
@@ -279,16 +284,18 @@ python3 -u -B load-testing/synthetic_recovery.py \
 
 ## 8. Gate mở official campaign
 
-Protocol v6 tách **collection integrity** khỏi **scientific identifiability**. Main chỉ
+Protocol v6.2 tách **collection integrity** khỏi **scientific identifiability**. Main chỉ
 được thu khi các điều kiện vận hành sau đạt:
 
 1. preflight PASS: NTP, disk, RAM, K3s, HPA absent, Istio 10%, Prometheus/Jaeger;
 2. order/plan đã đăng ký và collection lock không đổi;
 3. collection lock chỉ gồm `run-profiling.py`, `locustfile.py`, `collect_metrics.py` và
    `profiling-plan.json`; analyzer, synthetic, test và docs không nằm trong hash chặn;
-4. mỗi run phải có driver journal hoàn chỉnh, `dropped=0`, `unfinished=0`, không lỗi
+4. seed-specific envelope PASS trước khi phát tải: designed peak ≤60 RPS và
+   `rho_peak≤1.3`; Pareto canary phải hoàn tất trước 29 cell còn lại;
+5. mỗi run phải có driver journal hoàn chỉnh, `dropped=0`, `unfinished=0`, không lỗi
    logging, đủ raw artifact và không vi phạm runtime safety guard;
-5. trap khôi phục replica/HPA, campaign lock và resume đều hoạt động fail-closed.
+6. trap khôi phục replica/HPA, campaign lock và resume đều hoạt động fail-closed.
 
 Capture interval, Effective Service Latency, downstream-normal, recovery synthetic và
 `mu` là kết quả phân tích sau thu. Chúng được báo cáo đầy đủ nhưng không làm collector
@@ -302,7 +309,7 @@ python3 -B load-testing/run-profiling.py --profile main
 python3 -B load-testing/run-profiling.py --profile diagnostic
 ```
 
-Kỳ vọng: unit test pass; main in 39 execution/22.8 load hours; diagnostic in 3
+Kỳ vọng: 54 unit test pass; main v6.2 in 30 execution/17.5 load hours; diagnostic in 3
 execution/1.5 load hours. Preview không liên hệ cluster.
 
 Sau diagnostic, chạy audit cục bộ trên thư mục diagnostic. Artifact này chỉ là chẩn đoán,
@@ -323,15 +330,17 @@ thể cho `mu=None`; không còn buộc phát lại diagnostic hoặc chặn col
 
 ## 10. Những gì đã thay đổi trong code
 
-- `run-profiling.py`: joint val/test schedule, concurrent action dispatch, diagnostic
-  audit và ba gate recovery/stress/actual-contract.
-- `profiling-plan.json`: 20/8/8, dwell 510 giây, diagnostic 3 run peak-normalized.
+- `run-profiling.py`: joint val/test schedule, concurrent action dispatch, cổng envelope
+  seed-specific trước từng cell và tách collection/analyzer.
+- `profiling-plan.json`: v6.2 có 11/8/8 + 3 control, dwell 510 giây và tải
+  peak-normalized theo scenario.
 - `calibration.py` (estimator adapter): khóa `R_real/R_obs/p_dynamic`, cart operation
   diagnostics và fail-closed capacity.
 - `synthetic_recovery.py`: lifecycle bốn pha và misspecification stress.
 - `collect_metrics.py`: collector hiện đã giữ operation/raw spans và cgroup throttle cần
   cho adapter; không thêm một nguồn `R_real` nội bộ giả.
-- `test_profiling.py`: kiểm tra 20/8/8, joint budget/change constraint và gate mới.
+- `test_profiling.py`: kiểm tra 11/8/8 + 3, Pareto canary, joint constraints,
+  envelope rejection và hash/resume separation.
 
 ## 11. Rủi ro còn lại
 
@@ -582,35 +591,40 @@ rsync -av \
   artifacts/rl/actual_contract_report.json
 ```
 
-### 12.7 Main campaign
+### 12.7 Main campaign v6.2
 
-Sau khi code/tag v6 được đồng bộ, thực hiện đúng một chuỗi:
+Sau khi code/tag v6.2 được đồng bộ, dùng output mới và thực hiện đúng một chuỗi:
 
-1. `--profile main --register-order`;
+1. `--profile main --register-order` trên output v6.2;
 2. `--profile main --preflight-only`;
-3. chạy `--profile main --collect-only --resume --max-new 39` trong tmux riêng;
-4. trên bản raw đã rsync, chạy `--analyze-collected` bất kỳ lúc nào;
-5. detach và tắt laptop.
+3. chạy Pareto canary bằng `--collect-only --resume --max-new 1`;
+4. chỉ khi canary PASS mới resume `--max-new 29`;
+5. trên bản raw đã rsync, chạy `--analyze-collected` bất kỳ lúc nào;
+6. detach và tắt laptop.
 
 Analyzer crash chỉ ghi `analysis_failed`; run raw vẫn là `collected` và resume phải skip.
 Không tự sửa report hoặc nới ngưỡng để biến `mu=None` thành số.
 
-Lệnh chính thức trên `node-app` sau khi sync đúng tag v6:
+Không dùng lại `dataset/digital-twin-calibration-v2-official` làm output v6.2. Lệnh chính
+thức trên `node-app` sau khi sync đúng tag v6.2:
 
 ```bash
 cd ~/thesis-controller
 source node-ips.env
 
-python3 -B load-testing/run-profiling.py --profile main --register-order
+python3 -B load-testing/run-profiling.py \
+  --profile main --output dataset/digital-twin-calibration-v2-official-v6-2 \
+  --register-order
 
 python3 -B load-testing/run-profiling.py \
-  --profile main --preflight-only --direct-worker-ssh \
+  --profile main --output dataset/digital-twin-calibration-v2-official-v6-2 \
+  --preflight-only --direct-worker-ssh \
   --ssh-target "ubuntu@${NODE_LOADGEN_FIXED_IP}" \
   --observability-ssh-target "ubuntu@${NODE_OBSERVABILITY_FIXED_IP}" \
   --k3s-ssh-target "ubuntu@${NODE_APP_FIXED_IP}" \
   --ssh-key "$HOME/.ssh/profiling_controller"
 
-tmux new -s twin-main-v6
+tmux new -s twin-main-v6-2
 ```
 
 Trong tmux, chỉ khi preflight PASS:
@@ -618,18 +632,22 @@ Trong tmux, chỉ khi preflight PASS:
 ```bash
 cd ~/thesis-controller
 source node-ips.env
-mkdir -p dataset/digital-twin-calibration-v2-official
+mkdir -p dataset/digital-twin-calibration-v2-official-v6-2
 set -o pipefail
 
 python3 -u -B load-testing/run-profiling.py \
-  --profile main --collect-only --resume --max-new 39 \
+  --profile main --output dataset/digital-twin-calibration-v2-official-v6-2 \
+  --collect-only --resume --max-new 1 \
   --direct-worker-ssh \
   --ssh-target "ubuntu@${NODE_LOADGEN_FIXED_IP}" \
   --observability-ssh-target "ubuntu@${NODE_OBSERVABILITY_FIXED_IP}" \
   --k3s-ssh-target "ubuntu@${NODE_APP_FIXED_IP}" \
   --ssh-key "$HOME/.ssh/profiling_controller" \
-  2>&1 | tee -a dataset/digital-twin-calibration-v2-official/controller-main-v6.log
+  2>&1 | tee -a dataset/digital-twin-calibration-v2-official-v6-2/controller-main-v6-2.log
 ```
+
+Sau khi canary `294e916740b8975d3498` được validate, chạy lại đúng lệnh trên nhưng đổi
+`--max-new 1` thành `--max-new 29`. Không đăng ký order lần hai.
 
 Phân tích tăng dần chỉ chạy trên bản đã rsync, không chạy trong thư mục controller đang
 được collector ghi:
@@ -637,7 +655,7 @@ Phân tích tăng dần chỉ chạy trên bản đã rsync, không chạy trong
 ```bash
 python3 -B load-testing/run-profiling.py \
   --profile main --analyze-collected \
-  --output dataset/digital-twin-calibration-v2-official-rsync \
+  --output dataset/digital-twin-calibration-v2-official-v6-2-rsync \
   --analysis-report artifacts/rl/main_analysis_progress.json
 ```
 
@@ -677,3 +695,9 @@ Sau khi collection lock đổi, dùng output v6 mới và đăng ký order đún
   v6 đang chạy được tiếp tục bằng order v6 đã đăng ký chỉ khi hash Locust/collector/plan,
   toàn bộ execution order và validator fingerprint v6.1 khớp tuyệt đối; raw run hợp lệ
   được resume skip, không phát lại.
+- **v6.2:** amendment an toàn sau khi cell `a07f68ae687557f67d50` NHPP 2.5x đạt
+  client P95 13.675 giây với `dropped=0`, `max_in_flight=802<2000`. Cell được giữ
+  `safety-censored` và loại khỏi fit. Controller tái tạo trace trước từng cell, từ chối
+  nếu designed frontend peak >60 RPS hoặc `rho_peak>1.3`. Thiết kế mới gồm 30 execution;
+  không đổi abort rule, Wilson/capture/resource threshold hay estimator. Chi tiết và
+  hash khóa nằm trong `docs/protocol_v6_2.md`.

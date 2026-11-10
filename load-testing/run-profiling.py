@@ -9,6 +9,7 @@ import argparse
 import copy
 import csv
 import hashlib
+import importlib.util
 import inspect
 import itertools
 import json
@@ -29,7 +30,8 @@ from pathlib import Path, PurePosixPath
 # ---- Within-run capacity schedule and capture ----
 
 TWIN_PROTOCOL = 'digital_twin_calibration_v2'
-PROTOCOL_VERSION = 'collection_v6'
+PROTOCOL_VERSION = 'collection_v6_2'
+_DESIGNED_PEAK_CACHE = {}
 PRIOR_VALIDATOR_ONLY_RUNNER_SHA256 = (
     'cad613f63a4c5f505f95b3b9e7c8a20cbba97c2985a7e2b38348f31c8d541f2b'
 )
@@ -53,6 +55,107 @@ def collection_lock_sha256(plan_path=None):
     return digest(collection_lock_hashes(plan_path))
 
 
+def trace_definition_hashes():
+    """Provenance locked in campaign order, separate from the four-file collection lock."""
+    root = Path(__file__).parent
+    paths = [root / 'arrival_models.py'] + sorted(
+        path for path in (root / 'scenarios').glob('*.py')
+        if path.name != '__init__.py'
+    )
+    return {str(path.relative_to(root)).replace('\\', '/'):
+            hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}
+
+
+def _load_local_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f'cannot load collection module: {path}')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def designed_peak_rps(cell, code_root=None):
+    """Return the seed-specific designed frontend HTTP-operation peak.
+
+    This is generated from the same pure arrival model used by the load driver.
+    It is 100% designed frontend RPS, not sampled Jaeger RPS and not a statistic
+    from any collected campaign run.
+    """
+    root = Path(code_root) if code_root else Path(__file__).parent
+    key = (str(root.resolve()), cell['scenario'], float(cell['load_multiplier']),
+           int(cell['duration_sec']), int(cell['seed']))
+    if key in _DESIGNED_PEAK_CACHE:
+        return _DESIGNED_PEAK_CACHE[key]
+    arrivals = _load_local_module('envelope_arrival_models', root / 'arrival_models.py')
+    scenario = cell['scenario']
+    scenario_module = _load_local_module(
+        f'envelope_scenario_{scenario}', root / 'scenarios' / f'{scenario}.py'
+    )
+    config = arrivals.scaled_config(scenario_module.CONFIG, cell['load_multiplier'])
+    trace = arrivals.build_trace(config, cell['duration_sec'], cell['seed'])
+    rates = [float(row['expected_rps']) for row in trace['rate']]
+    if not rates or any(not math.isfinite(value) or value < 0 for value in rates):
+        raise ValueError(f'invalid designed rate trace for {cell.get("cell_id", scenario)}')
+    peak = max(rates)
+    _DESIGNED_PEAK_CACHE[key] = peak
+    return peak
+
+
+def cell_envelope_evidence(plan, cell, code_root=None):
+    """Compute and enforce the registered v6.2 physical admission envelope."""
+    gate = plan.get('envelope_gate')
+    if not isinstance(gate, dict):
+        raise ValueError('missing envelope_gate')
+    peak = designed_peak_rps(cell, code_root)
+    max_peak = float(gate['max_frontend_peak_rps'])
+    max_rho = float(gate['max_rho_peak'])
+    if not all(math.isfinite(value) and value > 0 for value in (max_peak, max_rho)):
+        raise ValueError('invalid envelope thresholds')
+
+    costs = gate['cost_real_cpu_core_per_rps']
+    fanouts = gate['effective_fanout_from_frontend']
+    limits = gate['cpu_limit_cores_per_pod']
+    focus_services = ([cell['focus_service']] if cell.get('focus_service') else
+                      list(plan['controlled_services']))
+    rho_by_service = {}
+    all_targets = [cell['replicas']] + [event['replicas'] for event in cell['schedule']]
+    for service in focus_services:
+        if service not in costs or service not in fanouts or service not in limits:
+            raise ValueError(f'missing envelope coefficient for {service}')
+        minimum_replicas = min(int(target[service]) for target in all_targets)
+        cost = float(costs[service])
+        fanout = float(fanouts[service])
+        limit = float(limits[service])
+        if (minimum_replicas < 1 or
+                not all(math.isfinite(value) and value > 0 for value in (cost, fanout, limit))):
+            raise ValueError(f'invalid envelope coefficient for {service}')
+        rho_by_service[service] = (
+            peak * cost * fanout / (limit * minimum_replicas)
+        )
+    worst_service = max(rho_by_service, key=rho_by_service.get)
+    evidence = dict(
+        designed_peak_frontend_rps=peak,
+        peak_limit_rps=max_peak,
+        rho_peak_by_service=rho_by_service,
+        worst_rho_peak=rho_by_service[worst_service],
+        worst_rho_service=worst_service,
+        rho_limit=max_rho,
+        rate_unit='designed 100% frontend HTTP operations/second',
+    )
+    if peak > max_peak + 1e-12:
+        raise ValueError(
+            f'envelope rejected {cell.get("cell_id", "cell")}: designed frontend peak '
+            f'{peak:.6g} RPS exceeds {max_peak:.6g} RPS'
+        )
+    if evidence['worst_rho_peak'] > max_rho + 1e-12:
+        raise ValueError(
+            f'envelope rejected {cell.get("cell_id", "cell")}: rho_peak '
+            f'{evidence["worst_rho_peak"]:.6g} for {worst_service} exceeds {max_rho:.6g}'
+        )
+    return evidence
+
+
 def validator_only_order_compatible(registered, candidate):
     """Allow the frozen v6 campaign to adopt only the reviewed v6.1 validator fix.
 
@@ -61,6 +164,9 @@ def validator_only_order_compatible(registered, candidate):
     transport validation was corrected.  Fingerprinting the validator source keeps
     this exception one-way and prevents later controller edits from silently using it.
     """
+    if (registered.get('protocol_version') != 'collection_v6'
+            or candidate.get('protocol_version') != 'collection_v6'):
+        return False
     current_validator = hashlib.sha256(
         inspect.getsource(validate_execution_artifacts).encode()
     ).hexdigest()
@@ -451,6 +557,98 @@ def frontend_span_coverage(rows, origin, duration, warmup, window):
     return sum(counts), sum(value == 0 for value in counts), windows
 
 
+def _profile_cell(plan, split, scenario, scale, seed, repeat, focus_service,
+                  joint_mode=False, canary=False):
+    focus_base = (dict(plan['configurations'][0]) if joint_mode
+                  else baseline_for_focus(plan, focus_service))
+    schedule = (joint_schedule_for(plan, seed, repeat, f'{split}:{scenario}:{scale}')
+                if joint_mode else schedule_for(
+                    plan, seed, repeat, 'calibrate', f'{split}:{scenario}:{scale}', focus_service
+                ))
+    cell = dict(
+        protocol=plan['protocol'], plan_sha256=digest(plan), split=split,
+        scenario=scenario, load_multiplier=scale, seed=seed, repeat=repeat,
+        replicas=focus_base, config_id=digest(focus_base)[:12], arm='calibrate',
+        focus_service=None if joint_mode else focus_service,
+        transition_design=('joint_constrained_random_walk' if joint_mode
+                           else 'isolating_focus'),
+        schedule=schedule, warmup_sec=plan['warmup_sec'], window_sec=plan['window_sec'],
+        min_frontend_spans=plan['min_frontend_spans'],
+        max_empty_frontend_window_fraction=plan['max_empty_frontend_window_fraction'],
+        drain_sec=plan['drain_sec'], collection_timeout_sec=plan['collection_timeout_sec'],
+        duration_sec=plan['duration_sec'],
+        post_ready_warmup_sec=plan.get('post_ready_warmup_sec', 30),
+        execution_schema_version=plan.get('schema_version', 1),
+        abort_rules=plan.get('abort_rules', {}), role=plan.get('data_role', 'study'),
+        max_action_lateness_sec=plan['max_action_lateness_sec'],
+    )
+    if canary:
+        cell['safety_canary'] = True
+    cell['cell_id'] = digest(cell)[:20]
+    return cell
+
+
+def safe_envelope_v62_cells(plan):
+    """Build the pre-amended 11/8/8 study without consulting collected fits."""
+    safe = plan.get('safe_scenario_multipliers', {})
+    if set(safe) != set(plan['scenarios']):
+        raise ValueError('safe_scenario_multipliers must cover every scenario')
+    if any(type(value) not in (int, float) or not math.isfinite(value) or value <= 0
+           for value in safe.values()):
+        raise ValueError('safe scenario multipliers must be finite and positive')
+    fractions = plan.get('evaluation_fractions')
+    if fractions != [0.5, 1.0]:
+        raise ValueError('v6.2 validation/test require evaluation fractions [0.5, 1.0]')
+    identification = plan.get('identification_services')
+    if identification != ['frontend', 'currencyservice']:
+        raise ValueError('v6.2 identification services must be frontend and currencyservice')
+    non_bottleneck = plan.get('non_bottleneck_workloads')
+    if set(non_bottleneck or {}) != {
+        'cartservice', 'productcatalogservice', 'recommendationservice'
+    }:
+        raise ValueError('v6.2 non-bottleneck services/workloads are incomplete')
+    if any(scenario not in plan['scenarios'] for scenario in non_bottleneck.values()):
+        raise ValueError('invalid non-bottleneck workload scenario')
+
+    seeds = plan['seeds_by_split']
+    cells = []
+    train_seed = seeds['train'][0]
+    repeat = 0
+    for service in identification:
+        for scenario in plan['scenarios']:
+            cells.append(_profile_cell(
+                plan, 'train', scenario, safe[scenario], train_seed, repeat, service
+            ))
+            repeat += 1
+    for service, scenario in non_bottleneck.items():
+        cells.append(_profile_cell(
+            plan, 'train', scenario, safe[scenario], train_seed, repeat, service,
+            canary=(service == 'productcatalogservice' and scenario == 'pareto'),
+        ))
+        repeat += 1
+    for split in ('validation', 'test'):
+        seed = seeds[split][0]
+        for repeat, (scenario, fraction) in enumerate(itertools.product(
+                plan['scenarios'], fractions)):
+            cells.append(_profile_cell(
+                plan, split, scenario, safe[scenario] * fraction,
+                seed, repeat, None, joint_mode=True,
+            ))
+    if len(cells) != 27:
+        raise AssertionError('v6.2 study must contain 27 non-control cells')
+    pareto_target = float(plan.get('pareto_peak_target_rps', float('nan')))
+    full_pareto = [cell for cell in cells if cell['scenario'] == 'pareto'
+                   and cell['load_multiplier'] == safe['pareto']]
+    if (not math.isfinite(pareto_target) or pareto_target <= 0 or not full_pareto
+            or any(not math.isclose(designed_peak_rps(cell), pareto_target,
+                                    rel_tol=0, abs_tol=1e-9)
+                   for cell in full_pareto)):
+        raise ValueError('Pareto safe multiplier must normalize every full-load seed to 50 RPS')
+    for cell in cells:
+        cell_envelope_evidence(plan, cell)
+    return cells
+
+
 def plan_cells(plan):
     if plan['protocol'] != TWIN_PROTOCOL or plan['sampling_percentage'] != 10:
         raise ValueError('unsupported digital-twin protocol or sampling != 10%')
@@ -518,6 +716,8 @@ def plan_cells(plan):
                    or value <= 0 or value not in plan['load_multipliers']
                    for value in scenario_loads.values())):
         raise ValueError('scenario_load_multipliers must map every scenario to a configured load')
+    if plan.get('design') == 'safe_envelope_v6_2':
+        return safe_envelope_v62_cells(plan)
     cells = []
     focus_services = list(plan['controlled_services'])
     focus_cycle = plan.get('focus_cycle')
@@ -614,6 +814,12 @@ def execution_cells(plan):
     for wave in range(max(map(len,groups.values()))):
         batch=[values[wave] for values in groups.values() if wave<len(values)]
         rng.shuffle(batch); ordered.extend(batch)
+    canaries = [cell for cell in ordered if cell.get('safety_canary')]
+    if len(canaries) > 1:
+        raise ValueError('at most one safety canary is allowed')
+    if canaries:
+        ordered.remove(canaries[0])
+        ordered.insert(0, canaries[0])
     spec=plan.get('control_cell')
     if spec:
         base=next(c for c in cells if c['scenario']==spec['scenario'] and c['load_multiplier']==spec['load_multiplier'])
@@ -622,10 +828,19 @@ def execution_cells(plan):
             c=copy.deepcopy(base); c.pop('cell_id')
             c.update(split='control',seed=spec['seed'],repeat=repeat,role='drift_control')
             c['focus_service']=spec.get('focus_service', plan['controlled_services'][0])
+            c['replicas']=baseline_for_focus(plan,c['focus_service'])
+            c['config_id']=digest(c['replicas'])[:12]
             c['schedule']=schedule_for(plan,spec['seed'],0,'calibrate','drift-control',c['focus_service'])
             c['cell_id']=digest(c)[:20]; controls.append(c)
-        mid=len(ordered)//2
-        ordered=[controls[0]]+ordered[:mid]+[controls[1]]+ordered[mid:]+[controls[2]]
+        if canaries:
+            first, remaining = ordered[0], ordered[1:]
+            mid=len(remaining)//2
+            ordered=[first,controls[0]]+remaining[:mid]+[controls[1]]+remaining[mid:]+[controls[2]]
+        else:
+            mid=len(ordered)//2
+            ordered=[controls[0]]+ordered[:mid]+[controls[1]]+ordered[mid:]+[controls[2]]
+    for cell in ordered:
+        cell_envelope_evidence(plan, cell)
     return ordered
 
 
@@ -635,10 +850,29 @@ def registered_order(plan, max_concurrent, plan_path=None):
         protocol_version=PROTOCOL_VERSION,
         collection_lock_sha256=collection_lock_sha256(plan_path),
         collection_code_sha256=collection_lock_hashes(plan_path),
+        trace_definition_sha256=trace_definition_hashes(),
         executions=[dict(block=i,cell_id=c['cell_id'],scenario=c['scenario'],split=c['split'],
-                         load_multiplier=c['load_multiplier'],seed=c['seed'],role=c.get('role','study'))
+                         load_multiplier=c['load_multiplier'],seed=c['seed'],role=c.get('role','study'),
+                         envelope=cell_envelope_evidence(plan,c))
                     for i,c in enumerate(execution_cells(plan))])
     return dict(body,order_sha256=digest(body))
+
+
+def validate_v62_canary_checkpoint(plan, all_cells, selected_cells,
+                                   completed_ids, max_new):
+    """Require the registered Pareto canary to complete as a one-cell checkpoint."""
+    if plan.get('design') != 'safe_envelope_v6_2':
+        return
+    canaries = [cell for cell in all_cells if cell.get('safety_canary')]
+    if len(canaries) != 1 or not all_cells or all_cells[0] != canaries[0]:
+        raise ValueError('v6.2 requires exactly one first-position safety canary')
+    canary_id = canaries[0]['cell_id']
+    if canary_id in completed_ids:
+        return
+    if max_new != 1:
+        raise ValueError('first v6.2 collection must use --max-new 1 for the safety canary')
+    if not selected_cells or selected_cells[0]['cell_id'] != canary_id:
+        raise ValueError('v6.2 safety canary cannot be skipped by collection filters')
 
 
 def analyze_collected(root, plan, report_path=None):
@@ -661,10 +895,14 @@ def analyze_collected(root, plan, report_path=None):
                                 analyzer_sha256=analysis['code_sha256']))
         except Exception as exc:
             results.append(dict(cell_id=folder.name, status='analysis_failed', error=repr(exc)))
+    for censored in plan.get('safety_censored_cells', []):
+        results.append(dict(cell_id=censored['cell_id'], status='safety_censored',
+                            exclude_from_fit=True, reason=censored['reason']))
     payload = dict(schema_version=1, protocol_version=PROTOCOL_VERSION,
                    analyzed_root=str(root), results=results,
                    analyzed=sum(row['status']=='analyzed' for row in results),
-                   failed=sum(row['status']=='analysis_failed' for row in results))
+                   failed=sum(row['status']=='analysis_failed' for row in results),
+                   safety_censored=sum(row['status']=='safety_censored' for row in results))
     target = Path(report_path) if report_path else root / 'analysis_progress.json'
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_suffix(target.suffix + '.tmp')
@@ -1037,6 +1275,48 @@ def parse_df_available_kib(output):
     if value < 0:
         raise ValueError('negative available disk reported')
     return value
+
+
+def cpu_quantity_cores(value):
+    """Parse the Kubernetes CPU quantity forms used by the deployment templates."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        cores = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        units = {'n': 1e-9, 'u': 1e-6, 'm': 1e-3}
+        suffix = text[-1:] if text else ''
+        try:
+            cores = float(text[:-1]) * units[suffix] if suffix in units else float(text)
+        except ValueError:
+            raise ValueError(f'invalid Kubernetes CPU quantity: {value!r}') from None
+    else:
+        raise ValueError(f'invalid Kubernetes CPU quantity: {value!r}')
+    if not math.isfinite(cores) or cores <= 0:
+        raise ValueError(f'invalid Kubernetes CPU quantity: {value!r}')
+    return cores
+
+
+def validate_envelope_cpu_limits(plan, deployments):
+    """Bind rho_peak denominators to the live application-container CPU limits."""
+    expected = plan['envelope_gate']['cpu_limit_cores_per_pod']
+    for service, registered_limit in expected.items():
+        if service not in deployments:
+            raise RuntimeError(f'envelope service deployment missing: {service}')
+        containers = deployments[service]['spec']['template']['spec'].get('containers', [])
+        application = [container for container in containers
+                       if container.get('name') != 'istio-proxy']
+        if len(application) != 1:
+            raise RuntimeError(
+                f'{service}: expected exactly one application container for envelope validation'
+            )
+        actual_value = application[0].get('resources', {}).get('limits', {}).get('cpu')
+        actual = cpu_quantity_cores(actual_value)
+        expected_value = float(registered_limit)
+        if not math.isclose(actual, expected_value, rel_tol=0, abs_tol=1e-12):
+            raise RuntimeError(
+                f'{service}: live CPU limit {actual:g} cores differs from '
+                f'registered envelope {expected_value:g} cores'
+            )
 
 
 def remote_clock_error_bound(ssh, samples=15):
@@ -1450,6 +1730,7 @@ def run_impl(args):
     if command(kubectl + ['get', '--raw=/readyz']) != 'ok':
         raise RuntimeError('K3s API /readyz is not ok')
     deployments = check_app_health()
+    validate_envelope_cpu_limits(plan, deployments)
 
     print('Operational preflight: clocks, memory, disk, Prometheus and Jaeger...')
     max_clock_error = min(args.max_clock_skew_ms / 1000.0, plan['max_clock_error_sec'])
@@ -1674,6 +1955,9 @@ def run_impl(args):
     completed_ids = collected_run_ids(
         root, all_cells, expected_profile, plan['max_unstarted_fraction']
     )
+    validate_v62_canary_checkpoint(
+        plan, all_cells, cells, completed_ids, args.max_new
+    )
     progress_path = root / 'profiling_progress.json'
     write_progress(progress_path, plan, context_hash, completed_ids, len(all_cells), 'scanning')
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
@@ -1705,6 +1989,13 @@ def run_impl(args):
             if count >= args.max_new:
                 print('Batch complete. Verify saved data/Jaeger storage before resuming same plan.')
                 break
+            envelope = cell_envelope_evidence(plan, cell)
+            print(
+                f'Envelope PASS {cell["cell_id"]}: peak='
+                f'{envelope["designed_peak_frontend_rps"]:.3f} RPS, '
+                f'worst rho_peak={envelope["worst_rho_peak"]:.3f} '
+                f'({envelope["worst_rho_service"]})'
+            )
             for label, remote_ssh, path in remote_disks:
                 available = parse_df_available_kib(command(remote_ssh + [shlex.join(['df', '-Pk', path])]))
                 if available < minimum_kib:
@@ -1720,7 +2011,7 @@ def run_impl(args):
                 )
             check_control()
             check_observability()
-            check_app_health()
+            validate_envelope_cpu_limits(plan, check_app_health())
             remote = f'{args.remote_results}/{cell["cell_id"]}'
             remote_exists = subprocess.run(
                 ssh + [shlex.join(['test', '-e', remote])],
@@ -1867,7 +2158,7 @@ def parse_args(argv=None):
     parser.add_argument('--repeat', type=int,
                         help='collect/preview only this configured repeat index')
     args = parser.parse_args(argv)
-    folder = {'main':'digital-twin-calibration-v2-official', 'smoke':'digital-twin-smoke-v2',
+    folder = {'main':'digital-twin-calibration-v2-official-v6-2', 'smoke':'digital-twin-smoke-v2',
               'diagnostic':'digital-twin-diagnostic-v5'}[args.profile]
     if args.output is None: args.output = f'dataset/{folder}'
     if args.remote_results is None: args.remote_results = f'/home/ubuntu/dataset/{folder}'
