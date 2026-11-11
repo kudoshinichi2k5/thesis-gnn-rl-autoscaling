@@ -21,7 +21,7 @@ if ! grep -qxF "## Jaeger Tracing & Service Graph Data" monitoring-stack/README.
 ## Jaeger Tracing & Service Graph Data
 - **Version:** `jaegertracing/all-in-one:1.60.0`
 - **Storage:** Badger DB (Docker named volume `jaeger_data`, xem `docker-compose.yml`)
-- **Sampling Rate:** 100% (Thu thập toàn bộ truy vết phục vụ huấn luyện GNN).
+- **Sampling Rate:** 10% (giữ cố định cho thu dữ liệu và triển khai; phải báo cáo coverage).
 MD_EOF
 fi
 

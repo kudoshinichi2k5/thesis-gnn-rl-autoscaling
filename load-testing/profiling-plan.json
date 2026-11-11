@@ -1,0 +1,198 @@
+{
+  "profiles": {
+    "main": {
+      "protocol": "digital_twin_calibration_v2",
+      "study_id": "online_boutique_digital_twin_v1_protocol_v6_2",
+      "schema_version": 3,
+      "design": "safe_envelope_v6_2",
+      "order_seed": 20261105,
+      "post_ready_warmup_sec": 30,
+      "joint_dwell_sec": 510,
+      "block_max_sec": 5400,
+      "control_cell": {"scenario": "mmpp", "load_multiplier": 0.5, "seed": 8600,
+        "focus_service": "recommendationservice"},
+      "abort_rules": {"max_dropped": 0, "window_sec": 30, "min_requests": 100,
+        "max_http_error_fraction": 0.30, "max_client_p95_ms": 10000,
+        "min_lag_samples": 20, "max_scheduling_p99_ms": 1000,
+        "min_loadgen_available_mib": 256, "max_sampler_gap_sec": 5},
+      "scenarios": ["nhpp", "mmpp", "onoff", "pareto"],
+      "safe_scenario_multipliers": {
+        "mmpp": 0.5,
+        "nhpp": 0.75,
+        "onoff": 1.25,
+        "pareto": 2.4649420542587386
+      },
+      "pareto_peak_target_rps": 50.0,
+      "load_multipliers": [0.25, 0.375, 0.5, 0.625, 0.75,
+        1.2324710271293693, 1.25, 2.4649420542587386],
+      "evaluation_fractions": [0.5, 1.0],
+      "identification_services": ["frontend", "currencyservice"],
+      "non_bottleneck_workloads": {
+        "cartservice": "onoff",
+        "productcatalogservice": "pareto",
+        "recommendationservice": "nhpp"
+      },
+      "envelope_gate": {
+        "max_frontend_peak_rps": 60.0,
+        "max_rho_peak": 1.3,
+        "cost_real_cpu_core_per_rps": {
+          "frontend": 0.0040,
+          "cartservice": 0.0055,
+          "currencyservice": 0.0030,
+          "productcatalogservice": 0.0048,
+          "recommendationservice": 0.0070
+        },
+        "effective_fanout_from_frontend": {
+          "frontend": 1.0,
+          "cartservice": 0.85,
+          "currencyservice": 1.20,
+          "productcatalogservice": 2.0375,
+          "recommendationservice": 0.65
+        },
+        "cpu_limit_cores_per_pod": {
+          "frontend": 0.5,
+          "cartservice": 0.5,
+          "currencyservice": 0.5,
+          "productcatalogservice": 0.5,
+          "recommendationservice": 1.0
+        },
+        "coefficient_source": "pre-cloud synthetic_recovery.py COST_TRUE/FANOUT_TRUE; product fanout includes direct 1.55 plus recommendation 0.65*0.75",
+        "cpu_limit_source": "k8s-manifests/online-boutique/values-override.yaml",
+        "rate_source": "arrival_models.build_trace designed expected_rps; 100% frontend HTTP operations, never Jaeger sampled RPS"
+      },
+      "safety_censored_cells": [
+        {
+          "cell_id": "a07f68ae687557f67d50",
+          "reason": "protocol-v6 NHPP 2.5x exceeded the unchanged 10s rolling client-P95 safety guard",
+          "exclude_from_fit": true,
+          "designed_peak_frontend_rps": 190.23710109249265,
+          "observed_client_p95_ms": 13674.744053998438,
+          "max_in_flight": 802,
+          "max_concurrent": 2000,
+          "dropped": 0,
+          "planned": 1078,
+          "started": 1078,
+          "unfinished_after_abort": 793
+        }
+      ],
+      "seeds_by_split": {
+        "train": [7600],
+        "validation": [7601],
+        "test": [7602]
+      },
+      "repeats": 1,
+      "duration_sec": 2100,
+      "window_sec": 30,
+      "warmup_sec": 300,
+      "settle_sec": 90,
+      "cooldown_sec": 120,
+      "drain_sec": 120,
+      "collection_timeout_sec": 1800,
+      "sampling_percentage": 10,
+      "max_concurrent": 2000,
+      "max_total_app_pods": 17,
+      "min_frontend_spans": 40,
+      "max_empty_frontend_window_fraction": 0.10,
+      "max_unstarted_fraction": 0.0,
+      "configurations": [
+        {
+          "adservice": 1,
+          "cartservice": 1,
+          "currencyservice": 1,
+          "emailservice": 1,
+          "paymentservice": 1,
+          "productcatalogservice": 1,
+          "recommendationservice": 1,
+          "shippingservice": 1,
+          "frontend": 1,
+          "checkoutservice": 1
+        }
+      ],
+      "controlled_services": [
+        "frontend", "cartservice", "currencyservice",
+        "productcatalogservice", "recommendationservice"
+      ],
+      "focus_guard_replicas": {
+        "frontend": {"cartservice": 2, "currencyservice": 2,
+          "productcatalogservice": 2, "recommendationservice": 2},
+        "cartservice": {"frontend": 3, "currencyservice": 2,
+          "productcatalogservice": 2, "recommendationservice": 2},
+        "currencyservice": {"frontend": 3, "cartservice": 2,
+          "productcatalogservice": 2, "recommendationservice": 2},
+        "productcatalogservice": {"frontend": 3, "cartservice": 2,
+          "currencyservice": 2, "recommendationservice": 2},
+        "recommendationservice": {"frontend": 3, "cartservice": 2,
+          "currencyservice": 2, "productcatalogservice": 2}
+      },
+      "replica_levels": [1, 2, 3],
+      "action_interval_sec": 90,
+      "recovery_dwell_sec": 90,
+      "scale_up_dwell_sec_by_service": {
+        "frontend": 510,
+        "cartservice": 510,
+        "currencyservice": 510,
+        "productcatalogservice": 510,
+        "recommendationservice": 510
+      },
+      "capacity_poll_sec": 5,
+      "max_clock_error_sec": 0.1,
+      "max_action_lateness_sec": 10,
+      "replica_limits": {
+        "frontend": 3,
+        "cartservice": 3,
+        "currencyservice": 3,
+        "productcatalogservice": 3,
+        "recommendationservice": 3
+      }
+    },
+    "smoke": {
+      "extends": "main",
+      "overrides": {
+        "study_id": "digital_twin_smoke_v1",
+        "design": "diagnostic_grid",
+        "data_role": "diagnostic",
+        "seeds_by_split": {"train": [7600]},
+        "control_cell": null,
+        "scenarios": ["nhpp", "mmpp", "onoff", "pareto"],
+        "load_multipliers": [0.5],
+        "max_concurrent": 400,
+        "duration_sec": 600,
+        "warmup_sec": 180,
+        "settle_sec": 30,
+        "cooldown_sec": 0,
+        "controlled_services": ["recommendationservice"],
+        "focus_cycle": null,
+        "scale_up_dwell_sec_by_service": {"recommendationservice": 120}
+      }
+    },
+    "diagnostic": {
+      "extends": "main",
+      "overrides": {
+        "study_id": "digital_twin_diagnostic_v5",
+        "design": "diagnostic_grid",
+        "data_role": "diagnostic",
+        "seeds_by_split": {"train": [7600]},
+        "control_cell": null,
+        "scenarios": ["nhpp", "mmpp", "onoff"],
+        "load_multipliers": [0.5, 0.75, 1.25],
+        "scenario_load_multipliers": {
+          "mmpp": 0.5,
+          "nhpp": 0.75,
+          "onoff": 1.25
+        },
+        "max_concurrent": 1000,
+        "duration_sec": 1800,
+        "warmup_sec": 180,
+        "settle_sec": 30,
+        "cooldown_sec": 120,
+        "controlled_services": ["frontend", "currencyservice", "cartservice"],
+        "focus_cycle": null,
+        "scale_up_dwell_sec_by_service": {
+          "frontend": 300,
+          "currencyservice": 300,
+          "cartservice": 300
+        }
+      }
+    }
+  }
+}

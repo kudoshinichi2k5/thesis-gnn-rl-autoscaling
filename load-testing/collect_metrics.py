@@ -6,12 +6,14 @@ adds no load to the cluster while the test is running.
 
 Sources (all already deployed by cluster-setup/):
   * Prometheus  (node-observability:9090) - cAdvisor on every node + kube-state-metrics
-  * Jaeger      (node-observability:16686) - Envoy/Istio spans, 100% sampling
+  * Jaeger      (node-observability:16686) - Envoy/Istio spans; sampling is a
+    deployment setting and is recorded by the intervention metadata
 
 Outputs in --out:
   node_metrics.csv     timestamp, service, resource/capacity features (Prometheus)
   edge_metrics.csv     timestamp, source, target, call_count, error_count, p50/p95 latency (Jaeger)
   service_metrics.csv  timestamp, service, inbound count/errors/p50/p95 latency (Jaeger)
+  jaeger_server_spans.csv  per-server-span latency (optional; --raw-spans-out)
   collect_report.json  coverage summary (series found, empty windows, truncated windows)
 
 Usage:
@@ -27,8 +29,10 @@ import re
 import sys
 import time
 from collections import defaultdict
+from pathlib import Path
 
 import requests
+from calibration import endpoint
 
 SERVICES = [
     "adservice", "cartservice", "checkoutservice", "currencyservice",
@@ -107,9 +111,13 @@ def collect_prometheus(base: str, ns: str, start: int, end: int, step: int, wind
         try:
             r = requests.get(url, params={"query": promql, "start": start, "end": end, "step": step}, timeout=60)
             r.raise_for_status()
-            result = r.json()["data"]["result"]
+            payload = r.json()
+            if payload.get("status") != "success":
+                raise ValueError("Prometheus did not return success")
+            result = payload["data"]["result"]
         except Exception as exc:
             print(f"[collect] WARN prometheus '{name}' failed: {exc}", file=sys.stderr)
+            report.setdefault("prometheus_query_failures", []).append(name)
             result = []
         report["prometheus_series"][name] = len(result)
         acc = defaultdict(float)
@@ -120,13 +128,17 @@ def collect_prometheus(base: str, ns: str, start: int, end: int, step: int, wind
             for ts, val in series["values"]:
                 f = _float(val)
                 if f is not None:
-                    acc[(int(float(ts)), svc)] += f
+                    timestamp=float(ts)
+                    acc[(int(timestamp) if timestamp.is_integer() else timestamp, svc)] += f
         for key, val in acc.items():
             rows[key][name] = val
 
     for fields in rows.values():
         thr, per = fields.pop("cpu_throttled_periods", None), fields.pop("cpu_total_periods", None)
-        fields["cpu_throttle_ratio"] = (thr / per) if thr is not None and per else 0.0
+        # Missing cgroup counters are not evidence of zero throttling. Preserve
+        # missing so the capacity estimator can fail closed, while CPU usage
+        # windows remain usable for the CPU cost model.
+        fields["cpu_throttle_ratio"] = (thr / per) if thr is not None and per else None
     return rows
 
 
@@ -170,9 +182,13 @@ def fetch_traces(base: str, service: str, start_us: int, end_us: int, limit: int
     try:
         r = requests.get(url, params=params, timeout=120)
         r.raise_for_status()
-        data = r.json().get("data") or []
+        payload = r.json()
+        if payload.get("errors") or not isinstance(payload.get("data"), list):
+            raise ValueError("Jaeger returned errors or malformed data")
+        data = payload["data"]
     except Exception as exc:
         print(f"[collect] WARN jaeger {service} [{start_us},{end_us}) failed: {exc}", file=sys.stderr)
+        report.setdefault("jaeger_failed_queries", []).append({"service": service, "start_us": start_us, "end_us": end_us})
         return []
     if len(data) >= limit:
         if end_us - start_us > 1_000_000 and depth < 4:
@@ -209,7 +225,18 @@ def _pct(values, q):
     return values[idx]
 
 
-def collect_jaeger(base: str, ns: str, start: int, end: int, step: int, limit: int, report: dict):
+def collect_jaeger(
+    base: str,
+    ns: str,
+    start: int,
+    end: int,
+    step: int,
+    limit: int,
+    report: dict,
+    raw_spans=None,
+    lookback_sec=0,
+    capture_end=None,
+):
     """Bucket Envoy spans by start time into step windows.
     Edge = client span of service A whose upstream is service B (or whose child
     server span belongs to B). Inbound = server spans of a service."""
@@ -222,8 +249,14 @@ def collect_jaeger(base: str, ns: str, start: int, end: int, step: int, limit: i
     inbound = defaultdict(lambda: {"n": 0, "err": 0, "lat": []})
     seen = set()
 
-    for w_start in range(start, end, step):
-        w_end = min(w_start + step, end)
+    # Query fewer, bounded 30s chunks for calibration; aggregation still uses
+    # the 10s grid. Whole-run queries can exceed Jaeger's limit and loadgen RAM.
+    query_step = 30 if lookback_sec else step
+    windows = range(start-lookback_sec, capture_end or end, query_step)
+    for window_index, w_start in enumerate(windows):
+        if window_index and window_index % 30 == 0:
+            print(f"[collect] Jaeger progress {window_index}/{len(windows)} windows", flush=True)
+        w_end = min(w_start + query_step, capture_end or end)
         for svc, jaeger_name in names.items():
             for trace in fetch_traces(base, jaeger_name, w_start * 1_000_000, w_end * 1_000_000, limit, report):
                 procs = {pid: _svc_name(p.get("serviceName", "")) for pid, p in trace.get("processes", {}).items()}
@@ -234,12 +267,11 @@ def collect_jaeger(base: str, ns: str, start: int, end: int, step: int, limit: i
                         if ref.get("refType") == "CHILD_OF":
                             children[ref.get("spanID")].append(s)
                 for s in spans:
-                    if s["spanID"] in seen:
+                    identity = (trace.get('traceID', ''), s['spanID'])
+                    if identity in seen:
                         continue
-                    seen.add(s["spanID"])
+                    seen.add(identity)
                     bucket = start + ((s["startTime"] // 1_000_000 - start) // step) * step
-                    if not (start <= bucket < end):
-                        continue
                     owner = procs.get(s.get("processID"))
                     if owner is None:
                         continue
@@ -248,8 +280,28 @@ def collect_jaeger(base: str, ns: str, start: int, end: int, step: int, limit: i
                     lat_ms = s.get("duration", 0) / 1000.0
                     err = _is_error(tags)
                     if kind == "server":
+                        if raw_spans is not None:
+                            path=tags.get('http.url') or tags.get('http.target') or ''
+                            method=tags.get('http.method') or ''
+                            raw_spans.append([
+                                s["startTime"] / 1_000_000,
+                                bucket,
+                                owner,
+                                lat_ms,
+                                int(err),
+                                s.get("operationName", ""),
+                                trace.get("traceID", ""),
+                                s["spanID"],
+                                (s['startTime']+s.get('duration',0))/1_000_000,
+                                endpoint(path,method) if path and method else 'UNMAPPED',
+                                lat_ms,
+                            ])
+                        if not start <= bucket < end:
+                            continue
                         acc = inbound[(bucket, owner)]
                     elif kind == "client":
+                        if not start <= bucket < end:
+                            continue
                         dst = _upstream_service(tags)
                         if dst is None:
                             for child in children.get(s["spanID"], []):
@@ -291,14 +343,16 @@ def main():
     p.add_argument("--rate-window", default=os.environ.get("RATE_WINDOW", "40s"),
                    help="rate() window, >= 3x the 10s scrape interval")
     p.add_argument("--trace-limit", type=int, default=int(os.environ.get("TRACE_LIMIT", 1500)))
+    p.add_argument("--raw-spans-out", help="optional CSV path for individual Jaeger server spans")
     p.add_argument("--skip-jaeger", action="store_true")
+    p.add_argument('--calibration', action='store_true', help='also export aligned 30s CPU and raw 10s counters')
     args = p.parse_args()
 
     start = args.start - args.start % args.step
     end = args.end
     os.makedirs(args.out, exist_ok=True)
     report = {"start": start, "end": end, "step": args.step, "prometheus_series": {},
-              "jaeger_truncated_windows": 0}
+              "jaeger_truncated_windows": 0, "jaeger_failed_queries": [], "prometheus_query_failures": []}
     t0 = time.time()
 
     node = collect_prometheus(args.prometheus, args.namespace, start, end, args.step, args.rate_window, report)
@@ -308,9 +362,44 @@ def main():
         [[ts, svc] + [_r(fields.get(k)) for k in NODE_FIELDS] for (ts, svc), fields in sorted(node.items())],
     )
 
+    if args.calibration:
+        driver=json.loads((Path(args.out)/'driver_report.json').read_text())
+        meta=json.loads((Path(args.out)/'meta.json').read_text())
+        origin=float(driver['trace_start_epoch'])
+        calibration_report={'prometheus_series':{},'prometheus_query_failures':[]}
+        aligned=collect_prometheus(args.prometheus,args.namespace,origin+30,
+            origin+(meta['duration_sec']//30)*30,30,'30s',calibration_report)
+        write_csv(Path(args.out)/'node_windows_30s.csv', ['window_end','service']+NODE_FIELDS,
+            [[ts,svc]+[_r(fields.get(k)) for k in NODE_FIELDS] for (ts,svc),fields in sorted(aligned.items())])
+        calibration_report['missing_values']={field:sum(fields.get(field) is None
+            for fields in aligned.values()) for field in NODE_FIELDS}
+        calibration_report['aligned_rows']=len(aligned)
+        report['calibration_prometheus']=calibration_report
+        report['prometheus_query_failures'].extend(calibration_report['prometheus_query_failures'])
+        counter_rows=[]
+        query=f'container_cpu_usage_seconds_total{{namespace="{args.namespace}", {APP_CONTAINERS}}}'
+        try:
+            response=requests.get(args.prometheus.rstrip('/')+'/api/v1/query_range',
+                params=dict(query=query,start=start,end=end,step=10),timeout=60)
+            response.raise_for_status(); payload=response.json()
+            if payload.get('status')!='success': raise ValueError('counter query unsuccessful')
+            for series in payload['data']['result']:
+                identity=json.dumps(series['metric'],sort_keys=True,separators=(',',':'))
+                for ts,value in series['values']:
+                    if _float(value) is not None:
+                        counter_rows.append([ts,identity,_service_of(series['metric'].get('pod',''),'pod'),value])
+        except Exception as exc:
+            report['prometheus_query_failures'].append('raw_cpu_counter')
+            print(f'[collect] raw counter query failed: {exc}',file=sys.stderr)
+        write_csv(Path(args.out)/'cpu_counter_10s.csv',
+                  ['timestamp','series_id','service','cpu_seconds_total'],counter_rows)
+
     if not args.skip_jaeger:
+        raw_spans = [] if args.raw_spans_out else None
         edges, inbound = collect_jaeger(args.jaeger, args.namespace, start, end, args.step,
-                                        args.trace_limit, report)
+                                        args.trace_limit, report, raw_spans,
+                                        lookback_sec=120 if args.calibration else 0,
+                                        capture_end=int(meta['wall_end']) if args.calibration else None)
         write_csv(
             os.path.join(args.out, "edge_metrics.csv"),
             ["timestamp", "source", "target", "call_count", "error_count", "latency_p50_ms", "latency_p95_ms"],
@@ -325,6 +414,21 @@ def main():
         )
         report["edge_rows"] = len(edges)
         report["service_rows"] = len(inbound)
+        expected = len(range(start, end, args.step))
+        report["service_empty_windows"] = {
+            service: expected - sum((timestamp, service) in inbound
+                                    for timestamp in range(start, end, args.step))
+            for service in report["jaeger_services"]
+        }
+        if args.raw_spans_out:
+            write_csv(
+                args.raw_spans_out,
+                ["timestamp", "bucket_timestamp", "service", "latency_ms", "error",
+                 "operation", "trace_id", "span_id", "end_timestamp", "endpoint",
+                 "effective_service_latency_ms"],
+                raw_spans,
+            )
+            report["raw_server_spans"] = len(raw_spans)
 
     report["node_rows"] = len(node)
     report["elapsed_sec"] = round(time.time() - t0, 1)

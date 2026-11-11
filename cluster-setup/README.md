@@ -52,7 +52,16 @@ Thực hiện tuần tự; mỗi bước cần được xác nhận trước khi
 
 1. Từ repo root, nạp OpenStack credentials trong WSL/Bash, sau đó chạy Terraform `init`, `plan`, xem đủ 5 instance và đúng 3 Floating IP (control-plane, observability, loadgen), rồi mới `apply`.
 2. Chạy `bash cluster-setup/00-generate-node-ips.sh`. File `node-ips.env` được sinh tự động, gồm floating IP cho ba node public và fixed IP cho cả hai worker.
-3. Chạy `bash cluster-setup/01-install-server.sh`. Script cài K3s `v1.34.9+k3s1`, tải kubeconfig có endpoint public của control-plane, lưu `k3s-node-token.txt` với quyền `0600`, rồi label/taint node-app.
+3. Chạy `bash cluster-setup/01-install-server.sh`. Script cài K3s `v1.34.9+k3s1`, tải kubeconfig dùng endpoint `127.0.0.1:6443`, lưu `k3s-node-token.txt` với quyền `0600`, rồi label/taint node-app qua SSH.
+   Trước khi dùng `kubectl` từ WSL, mở SSH tunnel tới API và giữ terminal đó hoạt động:
+
+  ```bash
+  source cluster-setup/node-ips.env
+  ssh -i "$HOME/.ssh/kltn_autoscaling" -N \
+    -L 127.0.0.1:6443:127.0.0.1:6443 \
+    -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 \
+    "ubuntu@${NODE_APP_FLOATING_IP}"
+  ```
 4. Export kubeconfig và join từng worker qua control-plane bằng ProxyJump:
 
   ```bash
@@ -68,7 +77,7 @@ Thực hiện tuần tự; mỗi bước cần được xác nhận trước khi
 7. Xem pod/service và thử scale frontend lên 2 replicas để xác nhận preferred anti-affinity phân tán chúng giữa hai worker. Scale frontend về 1 sau phép thử.
 8. Service `frontend-external` là LoadBalancer. K3s ServiceLB dùng host port của Service (mặc định HTTP port `80`); security group Terraform có rule `frontend-http` TCP/80. Truy cập Floating IP của control-plane cần ServiceLB pod/listener hoạt động trên node đó.
 9. Chạy `bash cluster-setup/04-setup-monitoring.sh`. Script sinh file-based discovery từ fixed IP mới của control-plane và hai worker; Prometheus scrape cả ba kubelet tại TCP/10250.
-10. Chạy `bash cluster-setup/05-setup-tracing.sh` để áp Telemetry sampling 100% và restart deployment để Envoy nhận cấu hình.
+10. Chạy `bash cluster-setup/05-setup-tracing.sh` để áp Telemetry sampling 10% và restart deployment để Envoy nhận cấu hình.
 11. Chạy `bash cluster-setup/06-setup-loadgen.sh` để đồng bộ `load-testing/` lên `node-loadgen`, tạo virtual environment và cài dependency.
 12. Chạy `bash cluster-setup/07-setup-hpa.sh apply` trước khi thu dataset baseline; dùng `status` để kiểm tra và `delete` khi chuyển sang controller khác.
 
@@ -81,7 +90,7 @@ Thực hiện tuần tự; mỗi bước cần được xác nhận trước khi
 - `02-install-istio.sh`: cài Istio, cấu hình tài nguyên, scheduling Istiod và Jaeger extension provider.
 - `03-deploy-online-boutique.sh`: vendor/install Helm chart và áp patch có thể tái tạo sau `rsync --delete`.
 - `04-setup-monitoring.sh`: tạo RBAC, kubeconfig KSM, Prometheus config và file SD target list rồi triển khai Docker Compose ở node-observability.
-- `05-setup-tracing.sh`: bật Telemetry sampling 100%, restart ứng dụng và kiểm tra rollout frontend.
+- `05-setup-tracing.sh`: bật Telemetry sampling 10%, restart ứng dụng và kiểm tra rollout frontend.
 - `06-setup-loadgen.sh`: cài dependency và đồng bộ code sinh tải lên `node-loadgen`.
 - `07-setup-hpa.sh`: apply/delete/status HPA baseline cho các deployment được cấu hình.
 - `istio-tracing.yaml`: Istio Telemetry resource dùng provider `external-jaeger`.

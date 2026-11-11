@@ -1,5 +1,116 @@
 # Load testing và thu raw dataset
 
+> **Cập nhật 07/11/2026:** main dùng 36 study run theo split 20 train / 8 validation /
+> 8 test và 3 drift control. Mỗi run chỉ sweep một focus service, bốn service điều khiển
+> còn lại được ghim ở guard capacity;
+> synthetic recovery v4 PASS nhưng collection thật vẫn NO-GO đến khi observation contract
+> được xác minh. Xem [campaign_readiness.md](../docs/campaign_readiness.md). Phần mô tả
+> “quét năm service + joint” bên dưới là protocol cũ.
+
+> **Trạng thái 06/11/2026: NO-GO cho thu chính thức.** Pipeline calibration v2 và
+> kiểm thử cục bộ đang thay thế protocol cũ. Đọc
+> [campaign_readiness.md](../docs/campaign_readiness.md) và
+> [data_pipeline_spec.md](../docs/data_pipeline_spec.md) trước khi chạy.
+> Main hiện có36 study +3 drift control; smoke/diagnostic bị loại khỏi dữ liệu học.
+> Cần đăng ký order/code hash; không chạy lại lệnh v1 bên dưới như lệnh v2 đã được duyệt.
+
+## Thu dữ liệu hiệu chỉnh Digital Twin
+
+Thiết kế và nguồn khoa học: [RL_DESIGN_PLAN.md](../docs/RL_DESIGN_PLAN.md).
+
+Chỉ có một entry point: **`run-profiling.py`**; cấu hình nằm trong
+**`profiling-plan.json`**. Script lập lịch replica, ghi command/desired/ready/available,
+thu raw server spans, kiểm tra dữ liệu và xuất manifest có hash. Helper
+`run-profile-loadgen.sh` chỉ được controller gọi nội bộ.
+
+> Lệnh vận hành đầy đủ (ba SSH target, NTP/disk guard, smoke, resume và thời gian dự kiến)
+> nằm tại [`docs/campaign_readiness.md`](../docs/campaign_readiness.md).
+> Các lệnh rút gọn cũ chỉ có `--ssh-target` không còn đủ cho live preflight.
+
+| Profile | Mục đích | Ngân sách đầy đủ |
+|---|---|---|
+| `smoke` | 4 scenario tải 0.5, `recommendationservice` 1→2→3→1 | 4 run train × (10 phút đo + 2 phút drain) |
+| `main` | 36 study run + 3 drift control | 39 execution × 35 phút = 22.75 giờ tải, chưa tính overhead; hiện bị khóa NO-GO |
+
+Mỗi run quét tuần tự 1→2→3→1 cho năm service được PPO điều khiển, sau đó đo một
+cấu hình joint hai service. Thứ tự service được xáo trộn theo seed nhưng tái lập được.
+Pair joint còn được salt theo split/scenario/mức tải để 12 run train không lặp duy nhất
+một cặp; surrogate nhận thêm tổng replica của cluster để nhận biết nhiễu tương tác.
+Đây không phải Cartesian lookup table và không dùng MLP sinh toàn bộ next-state.
+Sampling luôn **10%**, Redis cố định một replica và HPA phải tắt. Validator yêu cầu
+target thật sự Available trước action kế tiếp; một lệnh scale thành công chưa đủ.
+Sau cửa sổ đo, Locust dành 120 giây chỉ để drain session đang chạy; khoảng drain không
+được đưa vào telemetry fit. Run chỉ hợp lệ khi `planned=started=completed`, đồng thời
+`dropped=failed=unfinished=0` và coverage frontend đạt gate đã khóa trong plan.
+
+### Contract dữ liệu bắt buộc cho Digital Twin
+
+Campaign chỉ được chấp nhận khi mỗi run giữ đủ các nhóm sau; không cần tạo lookup table
+hay thêm nhiều file dẫn xuất:
+
+| Nhóm | Trường bắt buộc | Vai trò |
+|---|---|---|
+| Workload ngoại sinh | `timestamp/t`, scenario, seed, `load_multiplier`, `expected_rps`, loại request/session, `size/work_units`, planned/started/completed/dropped/failed | Tách tải được phát khỏi tải hệ thống xử lý được |
+| Replica lifecycle | thời điểm command, service, target, desired, total, ready, available ở mỗi poll; startup delay suy ra từ command→available | Học pending/warm-up và xác nhận action đã có hiệu lực |
+| Tài nguyên | service, CPU app, CPU sidecar, throttling, RAM working set, RX/TX, CPU request/limit, restart, replicas desired/available | Hiệu chỉnh capacity, CPU/RAM và phát hiện nhiễu hạ tầng |
+| Service performance | timestamp, service, sampled request/error count, P50/P95; raw server-span timestamp, duration, error, operation, trace/span ID | Fit và calibration phân phối latency ngẫu nhiên ở sampling 10% |
+| Graph edge | timestamp, caller `source`, callee `target`, sampled call/error count, P50/P95 | Học fan-out và thuộc tính cạnh động để lan truyền tải |
+| Provenance | protocol/study/cell ID, code/trace hash, sampling 10%, namespace, cluster-context hash, split | Chống lẫn campaign, sửa dữ liệu và rò rỉ split |
+
+`capacity_events.jsonl` chứa lifecycle; các file CSV/JSON còn lại đã bao phủ contract trên.
+Pod UID và node placement chỉ là trường mở rộng nếu nghiên cứu thêm restart/scheduling;
+Digital Twin hiện tại không tuyên bố mô hình hóa scheduler hay contention theo node.
+
+Chạy từ repo root trên máy Linux/WSL có kubectl/SSH/rsync. Sync helper mới bằng
+`bash cluster-setup/06-setup-loadgen.sh`, rồi tắt HPA bằng
+`bash cluster-setup/07-setup-hpa.sh delete`. Giữ máy điều khiển hoạt động.
+Kubeconfig dùng `127.0.0.1:6443`, vì vậy phải giữ SSH tunnel Kubernetes API theo
+`cluster-setup/README.md` trong suốt quá trình thu. Private key có passphrase phải được
+nạp bằng `ssh-add` trước khi chạy controller vì controller dùng SSH `BatchMode`.
+
+```bash
+# 1. Preview smoke, không tác động cluster.
+python3 load-testing/run-profiling.py --profile smoke
+
+# 2. Chạy bốn smoke train, mỗi scenario một run; thay host/key.
+python3 -u -B load-testing/run-profiling.py --profile smoke --split train --confirm --resume --max-new 4 \
+  --ssh-target ubuntu@LOADGEN_IP \
+  --observability-ssh-target ubuntu@OBSERVABILITY_IP \
+  --k3s-ssh-target ubuntu@K3S_CONTROL_PLANE_IP \
+  --ssh-key /path/to/kltn_autoscaling
+
+# 3. Không thu validation/test cho smoke. Sau bốn train run, checkpoint `paused`
+# với completed_count=4/total_count=12 là đúng vì filter chỉ chọn split train.
+
+# 4. Sau khi cả bốn smoke đạt, preview campaign chính: phải có đúng 36 cell.
+python3 load-testing/run-profiling.py --profile main
+
+# 5. Chạy đúng một campaign dài. Validator kiểm tra từng run và dừng khi có lỗi.
+mkdir -p dataset/digital-twin-calibration-v1
+set -o pipefail
+python3 load-testing/run-profiling.py --profile main --confirm --resume --max-new 36 \
+  --ssh-target ubuntu@LOADGEN_IP \
+  --observability-ssh-target ubuntu@OBSERVABILITY_IP \
+  --k3s-ssh-target ubuntu@K3S_CONTROL_PLANE_IP \
+  --ssh-key /path/to/kltn_autoscaling \
+  2>&1 | tee dataset/digital-twin-calibration-v1/controller-campaign.log
+
+# 6. Xuất manifest hoàn chỉnh; missing_cells phải rỗng.
+python3 load-testing/run-profiling.py \
+  --export dataset/digital-twin-calibration-v1/digital_twin_manifest.json
+```
+
+Thư mục mặc định là `dataset/digital-twin-smoke-v1` và
+`dataset/digital-twin-calibration-v1`. Có thể override bằng `--output` và
+`--remote-results`. Chạy lại đúng lệnh sẽ xác minh rồi bỏ qua run hoàn chỉnh. Không resume
+study cũ bằng protocol mới. Test được thu cùng campaign nhưng notebook khóa test cho tới khi
+Digital Twin, reward và quy tắc chọn checkpoint đã đóng băng.
+
+Notebook [train_ppo_kaggle.ipynb](../notebooks/rl/train_ppo_kaggle.ipynb) nạp manifest bằng
+`KAGGLE_TWIN_MANIFEST`: train/validation dùng hiệu chỉnh và gate; test đóng.
+
+Kiểm thử local: `python3 -B -m unittest discover -s load-testing -p test_profiling.py -v`.
+
 Thư mục này chứa code sinh tải và thu telemetry cho dataset duy nhất của đề tài. Tải được sinh **đúng theo các mô hình luồng đến chuẩn** trong lý thuyết hàng đợi và mô hình hóa traffic: **NHPP, MMPP, Bounded Pareto, ON/OFF**. Raw run được ghi vào [`../dataset/raw/`](../dataset/) và dùng chung cho GAT-GRU, GAT-LSTM, LSTM, GRU và RL. Notebook nằm riêng trong [`../notebooks/`](../notebooks/); code mô hình dùng chung nằm trong [`../modeling-common/`](../modeling-common/README.md).
 
 Lý do đằng sau các lựa chọn (run là gì, vì sao 8 run, 30 phút, chia tập thế nào) được giải thích trong [`../dataset/DATASET_GUIDE.md`](../dataset/DATASET_GUIDE.md).
@@ -17,8 +128,8 @@ Lý do đằng sau các lựa chọn (run là gì, vì sao 8 run, 30 phút, chia
 Lý do thiết kế:
 - **Driver chạy trên `node-loadgen` riêng**, nên bộ sinh tải không chiếm CPU của cụm và không làm nhiễu dữ liệu.
 - **Telemetry được xuất *sau* mỗi run** (Prometheus `query_range`, Jaeger `api/traces` cho đúng khoảng `[start, end]`), không lấy mẫu trực tiếp trong lúc chạy. Cách này không thêm tải lên hệ thống đang đo, và mọi metric nằm trên cùng một lưới thời gian 10s.
-- **Không cần sửa hạ tầng.** Prometheus scrape cAdvisor của cả 3 node và kube-state-metrics. Metric Istio (`istio_requests_total`) **không** được scrape, nên tải và quan hệ gọi giữa service được lấy từ **span Envoy quan sát được trong Jaeger**. Sampling được cấu hình 100%, nhưng capture coverage vẫn phải kiểm tra riêng.
-- **Luôn thu khi HPA bật.** Replica thay đổi theo tải, nên PPO thấy được ảnh hưởng của việc scale (xem mục 7 của DATASET_GUIDE).
+- **Không cần sửa hạ tầng.** Prometheus scrape cAdvisor của cả 3 node và kube-state-metrics. Metric Istio (`istio_requests_total`) **không** được scrape, nên tải và quan hệ gọi giữa service được lấy từ **span Envoy quan sát được trong Jaeger**. Sampling deployment giữ ở 10%; capture coverage của span vẫn phải kiểm tra riêng.
+- **Raw dataset lịch sử thu khi HPA bật; calibration mới thu khi HPA tắt.** Dataset cũ vẫn cung cấp workload/graph/forecast. Campaign mới nhận dạng startup, capacity, CPU/request và phân phối service time trong miền replica 1–3.
 
 ## Vì sao dùng mô hình luồng đến mở
 
@@ -55,9 +166,11 @@ Locust thông thường dùng **mô hình đóng**: có N(t) user cố định, 
 | `scenarios/{nhpp,mmpp,pareto,onoff}.py` | Tham số từng mô hình (`CONFIG`) |
 | `locustfile.py` | **Driver mở**: 1 user Locust phát lại trace, mỗi arrival chạy trong greenlet riêng với `HttpSession` riêng (cookie). Thống kê vẫn được ghi vào Locust. Giới hạn số phiên đồng thời `MAX_CONCURRENT` |
 | `run-scenario.sh` | Chạy N run (seed cố định) trên node-loadgen: chờ HPA về 1 replica, phát tải và xuất node/service/edge telemetry bằng `collect_metrics.py` |
+| `run-profiling.py` | Pipeline hiệu chỉnh Digital Twin: preview, lịch 1→2→3→1, journal capacity, validation/export và khôi phục replica |
+| `run-profile-loadgen.sh` | Helper nội bộ phát tải/thu telemetry; được controller gọi, không chạy riêng |
 | `collect_metrics.py` | Xuất metric của một run từ Prometheus + Jaeger thành CSV |
 | `requirements.txt` | `locust==2.31.8`, `requests` (venv `.venv/` trên node-loadgen, `run-scenario.sh` tự tạo nếu chưa có) |
-| `node-ips.env` | IP các node và `FRONTEND_URL` (điền tay, gitignored) |
+| `cluster-setup/node-ips.env` | Inventory runtime được sinh bởi `00-generate-node-ips.sh`; `06-setup-loadgen.sh` chép bản này sang node-loadgen |
 | `notebooks/dataset/analyze_workload.ipynb` | Kiểm chứng thống kê tải sinh ra và so sánh tải thiết kế với tải quan sát được |
 | `notebooks/gatgru/preprocess_gatgru.ipynb` | Tiền xử lý raw telemetry thành dữ liệu đồ thị |
 | `notebooks/gatgru/feature_selection_gatgru.ipynb` | Phân tích feature nút và feature cạnh trên train/validation |
@@ -78,14 +191,12 @@ bash cluster-setup/07-setup-hpa.sh status
 ### Bước 2. Đồng bộ thư mục lên node-loadgen (máy điều khiển, từ repo root)
 
 ```bash
-ssh -i ~/.ssh/kltn_autoscaling ubuntu@<NODE_LOADGEN_FLOATING_IP> 'mkdir -p ~/load-testing ~/dataset/raw'
-rsync -av --exclude='.venv/' --exclude='__pycache__/' \
-  -e "ssh -i ~/.ssh/kltn_autoscaling" load-testing/ ubuntu@<NODE_LOADGEN_FLOATING_IP>:~/load-testing/
-rsync -av dataset/raw/ \
-  -e "ssh -i ~/.ssh/kltn_autoscaling" ubuntu@<NODE_LOADGEN_FLOATING_IP>:~/dataset/raw/
+bash cluster-setup/06-setup-loadgen.sh
 ```
 
-Chạy lại lệnh này **mỗi khi sửa** code trong thư mục. Lệnh đồng bộ cả `node-ips.env`, nên file này phải có `NODE_OBSERVABILITY_FIXED_IP` và `FRONTEND_URL` đúng.
+Chạy lại lệnh này **mỗi khi sửa** code trong thư mục. Script đồng bộ code và chép
+`cluster-setup/node-ips.env` sang node-loadgen; inventory phải có
+`NODE_OBSERVABILITY_FIXED_IP` và `FRONTEND_URL` đúng.
 
 ### Bước 3. Chạy thử 2 phút (node-loadgen)
 
@@ -114,7 +225,7 @@ rm -rf dataset/raw/mmpp/run_01
 
 ### Bước 4. Thu từng kịch bản: mỗi lần 1 kịch bản × 8 run
 
-**Không chạy cả 4 kịch bản liền một mạch.** Jaeger (`all-in-one`, Badger lưu bền, sampling 100%) không tự xóa span cũ: TTL mặc định là 72 giờ. Mỗi run 30 phút sinh vài triệu span, rồi `collect_metrics.py` lại gửi khoảng 1.800 truy vấn `api/traces` ngay sau run. Dữ liệu dồn qua nhiều run làm node-observability quá tải dần: với 4 vCPU / 4 GB, đợt chạy liền chỉ thu được 4 run rồi dừng.
+**Không chạy cả 4 kịch bản liền một mạch.** Jaeger (`all-in-one`, Badger lưu bền, sampling 10%) không tự xóa span cũ: TTL mặc định là 72 giờ. Mỗi run 30 phút sinh nhiều span, rồi `collect_metrics.py` lại gửi khoảng 1.800 truy vấn `api/traces` ngay sau run. Dữ liệu dồn qua nhiều run làm node-observability quá tải dần: với 4 vCPU / 4 GB, đợt chạy liền chỉ thu được 4 run rồi dừng.
 
 Telemetry đã được xuất ra CSV sau mỗi run, nên Jaeger chỉ cần giữ span của kịch bản đang chạy. Vì vậy mỗi kịch bản là một chu trình riêng:
 
@@ -217,7 +328,7 @@ Trước mỗi run, script đọc `max(kube_deployment_spec_replicas)` từ Prom
 | `COOLDOWN_SEC` | `120` | Nghỉ sau mỗi run để request tồn đọng xử lý xong (trước bước chờ replica) |
 | `REPLICA_WAIT_MAX_SEC` | `1200` | Thời gian chờ tối đa để mọi deployment về 1 replica trước mỗi run |
 | `SEED_BASE` | `1000` | Seed của `run_k` = `SEED_BASE + k`. Run cùng số thứ tự sinh **cùng trace**, nên các phương pháp autoscaling so sánh được theo cặp |
-| `MAX_CONCURRENT` | `400` | Số phiên/request đồng thời tối đa trên loadgen 1 vCPU. Arrival vượt mức bị **bỏ và đếm** trong `driver_report.json` |
+| `MAX_CONCURRENT` | `400` khi chạy driver trực tiếp | Số phiên/request đồng thời tối đa. Profiling controller lấy ngân sách đã version hóa theo profile: smoke `400`, diagnostic `1000`, main `2000`; CLI `--max-concurrent` chỉ dùng như override có chủ đích và làm thay đổi campaign order. Arrival vượt mức vẫn bị **bỏ và đếm**, khiến run fail closed. |
 | `RESULTS_DIR` | `dataset/raw` | Thư mục kết quả. Đặt thư mục riêng cho mỗi phương pháp trong thực nghiệm cuối, khi đó run thứ k của mọi phương pháp có cùng seed |
 | `STEP_SEC` | `10` | Bước lưới khi xuất telemetry |
 
@@ -242,6 +353,7 @@ Ghi chú về nguồn dữ liệu:
 - CPU, memory và network lấy theo pod rồi **gộp theo service** (tên pod `<deployment>-<hash>-<id>`). CPU ứng dụng không tính container `istio-proxy`; CPU của sidecar được tách riêng thành `cpu_sidecar_cores`.
 - Cạnh `A → B` được lấy từ span `client` của sidecar A. Đích xác định qua tag `upstream_cluster`, hoặc qua span `server` con. Online Boutique chưa truyền tiếp trace header, nên mỗi trace chỉ gồm một cặp client–server. Cấu trúc này cho phép đếm các cạnh quan sát được, nhưng Jaeger UI không hiện một chuỗi trace đầy đủ.
 - `cartservice → redis-cart` là TCP, không có span, nên `call_rate = 0`. Cạnh vẫn được giữ trong topology tĩnh; tải của `redis-cart` thể hiện qua network và `cpu_sidecar_cores`.
+- Với intervention, `jaeger_server_spans.csv` là file tùy chọn do `--raw-spans-out` tạo; file chứa timestamp, service, latency, error, operation, trace ID và span ID để phân tích phân phối latency ở cấp span.
 
 ## Kiểm tra chất lượng từng run
 
@@ -334,4 +446,4 @@ Final v05 không dùng `error_rate`, `cpu_util_request`, `cpu_throttle_ratio`, `
 3. **`Locust venv missing`**: script tự tạo `.venv/` (cần `python3-venv` trên node-loadgen).
 4. **Mất SSH giữa run**: chạy trong `tmux` (hoặc `nohup`). Run dở dang phải xóa thủ công trong `dataset/raw/`.
 5. **Xuất telemetry chậm**: Jaeger trả trace theo từng cửa sổ 10s cho mỗi service; với run 30 phút ở trạng thái High, bước này mất vài phút.
-6. **node-observability quá tải giữa chừng** (Jaeger không phản hồi, `collect_metrics.py` báo `WARN jaeger ... failed`, `jaeger_services` rỗng): Badger đã tích quá nhiều span. Dừng kịch bản (bước 4b), kéo kết quả về và giữ lại các run đạt (4c), xóa run dở, reset Jaeger (4d), rồi chạy số run còn thiếu (bước 5). Muốn Jaeger tự xóa span cũ mà không cần reset tay thì cần đặt `BADGER_SPAN_STORE_TTL` ngắn (ví dụ `3h`) trong `cluster-setup/04-setup-monitoring.sh`; báo người phụ trách `cluster-setup/`.
+6. **node-observability quá tải giữa chừng** (Jaeger không phản hồi, `collect_metrics.py` báo `WARN jaeger ... failed`, `jaeger_services` rỗng): kiểm tra container có flag `--badger.span-store-ttl=3h0m0s`. Campaign v4 đã cấu hình TTL này trong monitoring Compose; không tăng sampling quá 10%.

@@ -18,12 +18,33 @@ Models (see README.md for the formulas):
 Python >= 3.8, no third-party dependency (runs inside the Locust venv on node-loadgen).
 """
 import csv
+import copy
 import json
 import math
 import os
 import random
 
 # ----------------------------------------------------------------------------- distributions
+
+def scaled_config(cfg, multiplier=1.0):
+    """Scale offered arrival intensity, preserving durations and per-session work."""
+    multiplier = float(multiplier)
+    if not math.isfinite(multiplier) or multiplier <= 0:
+        raise ValueError('load multiplier must be finite and positive')
+    cfg = copy.deepcopy(cfg)
+    if cfg['model'] == 'nhpp':
+        for key in ('base', 'amp1', 'amp2', 'floor'):
+            cfg[key] *= multiplier
+    elif cfg['model'] == 'mmpp':
+        for state in cfg['states'].values():
+            state['rate'] *= multiplier
+    elif cfg['model'] == 'pareto':
+        cfg['session_rate'] *= multiplier
+    elif cfg['model'] == 'onoff':
+        cfg['rate_on'] *= multiplier
+    else:
+        raise ValueError('unsupported workload model')
+    return cfg
 
 
 def exponential(rng, mean):
@@ -233,5 +254,11 @@ def write_trace(trace, out_dir):
             w.writerow([r['t'], r['state'], round(r['lambda_sessions'], 5), round(r['expected_rps'], 5)])
     summary = {k: trace[k] for k in ('model', 'seed', 'duration', 'meta', 'expected_mean_rps', 'designed_mean_rps')}
     summary['n_events'] = len(trace['events'])
+    summary['rate_units'] = {
+        'expected_rps': 'expected top-level HTTP operations/second; excludes redirect hops; not realized RPS',
+        'lambda_sessions': ('active sources (legacy column name)' if trace['model'] == 'onoff'
+                            else 'sessions/second'),
+    }
+    summary['arrival_unit'] = 'request' if trace['model'] == 'onoff' else 'session'
     with open(os.path.join(out_dir, 'trace_meta.json'), 'w') as f:
         json.dump(summary, f, indent=1)

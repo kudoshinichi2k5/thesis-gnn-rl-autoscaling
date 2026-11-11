@@ -105,7 +105,7 @@ chmod 600 "${REPO_ROOT}/cluster-setup/prometheus-remote-token.txt"
 echo "Dọn dẹp token tạm trên remote..."
 ssh -i "$SSH_KEY" "$SSH_USER@$NODE_IP" "rm -f /tmp/prometheus-remote-token.txt /tmp/prometheus-rbac.yaml"
 
-echo "[3/3] Kéo Kubeconfig (Giữ nguyên 127.0.0.1 để dùng qua SSH Tunnel)..."
+echo "[3/3] Kéo Kubeconfig dùng qua SSH tunnel localhost:6443..."
 mkdir -p ~/.kube
 ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" "cat /etc/rancher/k3s/k3s.yaml" > ~/.kube/config
 chmod 600 ~/.kube/config
@@ -116,11 +116,9 @@ ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" \
 chmod 600 "${SCRIPT_DIR}/k3s-node-token.txt"
 
 echo "Gắn label và taint control-plane trước khi worker join..."
-kubectl --kubeconfig="$HOME/.kube/config" wait \
-  --for=condition=Ready "node/${NODE_NAME}" --timeout=120s
-kubectl --kubeconfig="$HOME/.kube/config" label node "$NODE_NAME" \
-  node-role=control-plane --overwrite
-kubectl --kubeconfig="$HOME/.kube/config" taint node "$NODE_NAME" \
-  dedicated=control-plane:NoSchedule --overwrite
+ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "$SSH_USER@$NODE_IP" \
+  "sudo k3s kubectl wait --for=condition=Ready 'node/${NODE_NAME}' --timeout=120s && \
+   sudo k3s kubectl label node '${NODE_NAME}' node-role=control-plane --overwrite && \
+   sudo k3s kubectl taint node '${NODE_NAME}' dedicated=control-plane:NoSchedule --overwrite"
 
 echo "✅ Hoàn tất cài đặt K3s!"

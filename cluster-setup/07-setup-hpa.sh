@@ -17,6 +17,22 @@ export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
 usage() { echo "Usage: bash cluster-setup/07-setup-hpa.sh {apply|delete|status}" >&2; exit 2; }
 [[ $# -eq 1 ]] || usage
 
+check_cluster_api() {
+  local endpoint
+  endpoint="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null || true)"
+  if [[ -z "$endpoint" ]]; then
+    echo "❌ Kubeconfig không có Kubernetes API endpoint: ${KUBECONFIG}" >&2
+    exit 1
+  fi
+  if ! kubectl --request-timeout=5s get --raw=/readyz >/dev/null 2>&1; then
+    echo "❌ Không kết nối được Kubernetes API tại ${endpoint}." >&2
+    echo "   Kiểm tra endpoint kubeconfig, trạng thái VM/K3s và cổng TCP 6443 trước khi thay đổi HPA." >&2
+    exit 1
+  fi
+}
+
+check_cluster_api
+
 check_metrics_server() {
   # K3s cài sẵn metrics-server; HPA không có dữ liệu CPU nếu API này không Available.
   local available

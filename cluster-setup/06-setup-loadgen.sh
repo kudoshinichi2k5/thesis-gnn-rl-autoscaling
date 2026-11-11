@@ -28,6 +28,13 @@ rsync -av \
   -e "$RSYNC_SSH" \
   "${LOAD_TEST_DIR}/" "${SSH_USER}@${NODE_LOADGEN_FLOATING_IP}:${REMOTE_DIR}/"
 
+# The load generator reads its runtime endpoints from the same generated inventory
+# as the cluster scripts. This file is gitignored and intentionally copied separately.
+rsync -av \
+  -e "$RSYNC_SSH" \
+  "${SCRIPT_DIR}/node-ips.env" \
+  "${SSH_USER}@${NODE_LOADGEN_FLOATING_IP}:${REMOTE_DIR}/node-ips.env"
+
 ssh "${SSH_OPTIONS[@]}" "${SSH_USER}@${NODE_LOADGEN_FLOATING_IP}" \
   "cd '${REMOTE_DIR}' && python3 -m venv .venv && .venv/bin/python -m pip install --disable-pip-version-check -r requirements.txt && .venv/bin/locust --version"
 
