@@ -8,3 +8,10 @@ monitoring-stack/file_sd/kubelet-targets.json
 tracker_ai.md
 k8s-manifests/tracker_ai.md
 kltn-env
+# Python bytecode (tự sinh khi chạy)
+__pycache__/
+*.py[cod]
+# Sản phẩm triển khai autoscaler trên máy build (DEPLOY_AUTOSCALER_MODELS.md): không commit
+/bundle/
+/models/
+/snapshots/

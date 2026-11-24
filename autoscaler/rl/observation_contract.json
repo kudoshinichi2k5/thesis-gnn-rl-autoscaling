@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "contract_id": "ppo_obs_v3_10svc_d2",
+  "gatgru_model_version": "gatgru_v05_selected_features_final",
+  "scaled_services": [
+    "frontend", "cartservice", "checkoutservice", "currencyservice",
+    "productcatalogservice", "recommendationservice",
+    "adservice", "emailservice", "paymentservice", "shippingservice"
+  ],
+  "fixed_services": ["redis-cart"],
+  "per_service_features": [
+    "cpu_util_request", "latency_p95_ms", "error_rate", "rps_in",
+    "fc_rps_t1", "fc_rps_t3", "fc_rps_t6",
+    "fc_cpu_t1", "fc_cpu_t3", "fc_cpu_t6",
+    "replicas", "slo_violation", "sec_since_last_scale"
+  ],
+  "global_features": ["e2e_latency_p95_ms", "e2e_error_rate"],
+  "observation_layout": "per_service_features x scaled_services (service-major), then global_features",
+  "observation_dim": 132,
+  "normalization": {
+    "type": "none",
+    "note": "Nếu PPO thật dùng VecNormalize, lưu thêm vecnormalize.pkl và khai báo ở đây"
+  },
+  "action_space": {
+    "type": "MultiDiscrete",
+    "nvec": [5, 5, 5, 5, 5, 5, 5, 5, 5, 5],
+    "mapping": "delta = a - 2",
+    "delta_values": [-2, -1, 0, 1, 2],
+    "note": "Theo Agarwal et al. (IEEE TSC 2024): Δ ∈ {-2..+2} mỗi chu kỳ quyết định 30s"
+  },
+  "decision_period_sec": 30,
+  "replica_bounds": { "min": 1, "max": 15, "max_total": 26, "max_step": 2 }
+}

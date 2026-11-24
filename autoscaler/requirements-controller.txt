@@ -1,0 +1,9 @@
+# Thư viện của image controller. torch/numpy/pandas cố định đúng phiên bản trong
+# artifacts/gatgru/v05_selected_features_final/handoff_manifest.json (runtime đã kiểm chứng golden test).
+numpy==2.5.4
+pandas==3.0.6
+requests
+kubernetes
+prometheus-client
+gymnasium
+stable-baselines3

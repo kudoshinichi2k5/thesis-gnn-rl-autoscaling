@@ -1,0 +1,42 @@
+# Quyền tối thiểu: chỉ đọc Deployment và đọc/patch subresource scale trong online-boutique.
+# Controller KHÔNG có quyền xóa/tạo tài nguyên (kể cả HPA).
+# Role và RoleBinding nằm ngoài namespace autoscaler nên gắn nhãn part-of để xóa theo nhãn:
+#   kubectl -n online-boutique delete role,rolebinding -l part-of=gnn-rl-autoscaler
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: gnn-rl-autoscaler
+  namespace: autoscaler
+  labels:
+    part-of: gnn-rl-autoscaler
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: autoscaler-scale
+  namespace: online-boutique
+  labels:
+    part-of: gnn-rl-autoscaler
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "list"]
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: autoscaler-scale
+  namespace: online-boutique
+  labels:
+    part-of: gnn-rl-autoscaler
+subjects:
+  - kind: ServiceAccount
+    name: gnn-rl-autoscaler
+    namespace: autoscaler
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: autoscaler-scale

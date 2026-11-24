@@ -33,7 +33,6 @@ DEFAULTS = {'max_epochs': 60, 'patience': 8, 'weight_decay': 1e-4, 'grad_clip': 
 GRAPH_MODEL_KINDS = frozenset({'gatgru', 'gatlstm'})
 # Identical search/evaluation budget for every model (change here, never per notebook).
 BUDGET = {'n_trials': 40, 'search_seed': 42, 'final_seeds': (0, 1, 2, 3, 4), 'importance_repeats': 5}
-DEMO_BUDGET = {'n_trials': 3, 'search_seed': 42, 'final_seeds': (0, 1), 'importance_repeats': 2, 'max_epochs': 3}
 
 
 def set_seed(seed):
