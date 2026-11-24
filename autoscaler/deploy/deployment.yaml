@@ -1,0 +1,57 @@
+# Controller autoscaler: 1 replica, ghim vào control-plane (node-app), không inject Istio.
+# Image được import thủ công vào containerd của node-app nên imagePullPolicy: Never.
+# node-app chỉ có 2 vCPU (đã chạy K3s server + istiod) nên requests/limits để thấp.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gnn-rl-autoscaler
+  namespace: autoscaler
+  labels:
+    part-of: gnn-rl-autoscaler
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # PVC ReadWriteOnce: không để hai pod cùng chạy
+  selector:
+    matchLabels:
+      app: gnn-rl-autoscaler
+  template:
+    metadata:
+      labels:
+        app: gnn-rl-autoscaler
+        part-of: gnn-rl-autoscaler
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: gnn-rl-autoscaler
+      nodeSelector:
+        node-role: control-plane
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: control-plane
+          effect: NoSchedule
+      containers:
+        - name: controller
+          image: gnn-rl-autoscaler:0.1.0
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+              name: metrics
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits:   { cpu: "1",  memory: 1Gi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8000 }
+            periodSeconds: 10
+          volumeMounts:
+            - { name: models, mountPath: /models, readOnly: true }
+            - { name: policy, mountPath: /config }
+            - { name: logs,   mountPath: /decision-log }
+      volumes:
+        - name: models
+          persistentVolumeClaim: { claimName: models, readOnly: true }
+        - name: policy
+          configMap: { name: autoscaler-policy }
+        - name: logs
+          persistentVolumeClaim: { claimName: decision-log }

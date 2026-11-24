@@ -1,0 +1,10 @@
+# Namespace riêng cho controller autoscaler.
+# KHÔNG gắn nhãn istio-injection: controller không được inject sidecar và không
+# được trở thành một nút trong đồ thị dịch vụ đang đo.
+# Xóa namespace này là xóa Deployment, ConfigMap, ServiceAccount và PVC.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: autoscaler
+  labels:
+    part-of: gnn-rl-autoscaler

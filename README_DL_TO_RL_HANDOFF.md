@@ -174,12 +174,7 @@ Mọi tensor node và output sử dụng đúng thứ tự sau:
 
 Không được sort lại service khi inference. Service embedding và output head phụ thuộc trực tiếp vào index này.
 
-`forecast_data.SCALED_SERVICES` hiện liệt kê sáu service mà controller/HPA dự kiến điều khiển:
-
-```text
-frontend, cartservice, checkoutservice, currencyservice,
-productcatalogservice, recommendationservice
-```
+HPA baseline (`k8s-manifests/hpa/hpa-online-boutique.yaml`) và autoscaler cùng điều khiển 10 service, tức mọi service trừ `redis-cart` (Redis đơn, giữ 1 replica). Danh sách và thứ tự service được scale nằm trong hợp đồng PPO `autoscaler/rl/observation_contract.json`.
 
 RL mới phải định nghĩa action mapping tường minh. Mô hình dự báo 11 service không có nghĩa controller bắt buộc scale cả 11 service.
 
@@ -898,7 +893,7 @@ Không giả lập `error_rate=0` chỉ vì model không dự báo metric này. 
 - RL state contract có thể bổ sung current latency, error rate, replicas, cooldown và action history.
 - RL action contract phải chỉ rõ service nào được scale, min/max replica, scale delay và cooldown.
 - RL reward phải dựa trên post-action/environment metrics, không được coi forecast là ground-truth outcome.
-- Nếu chỉ điều khiển sáu `SCALED_SERVICES`, action tensor phải có mapping riêng tới 11 node forecast.
+- Controller điều khiển 10 service nhưng forecast có 11 node: action tensor phải ánh xạ theo tên service tới index trong `forecast_data.SERVICES`, không theo vị trí.
 
 ### 10.6 Split discipline cho RL
 

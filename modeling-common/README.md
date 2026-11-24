@@ -6,7 +6,7 @@ Thư mục này chứa logic dữ liệu, chọn feature, huấn luyện, tìm s
 
 | File | Phụ thuộc | Nội dung |
 |---|---|---|
-| `forecast_data.py` | numpy, pandas | Hằng số (service, topology, feature, target, `HORIZON = 6`); đọc run; căn lưới 10s; tính feature; đọc split dùng chung (`dataset/splits.json`); chuẩn hóa (clip p99,9 → log1p → z-score fit trên train); cắt cửa sổ trượt; dữ liệu demo |
+| `forecast_data.py` | numpy, pandas | Hằng số (service, topology, feature, target, `HORIZON = 6`); đọc run; căn lưới 10s; tính feature; đọc split dùng chung (`dataset/splits.json`); chuẩn hóa (clip p99,9 → log1p → z-score fit trên train); cắt cửa sổ trượt |
 | `feature_selection.py` | numpy, pandas | Bước 1 của chọn feature (lọc thống kê) và luật chọn theo permutation importance |
 | `forecast_torch.py` | PyTorch, Optuna | `LSTMForecaster`, `GATGRUForecaster` (GAT có feature cạnh, viết bằng PyTorch thuần); vòng huấn luyện; Optuna; permutation importance; huấn luyện lại nhiều seed; đo thời gian suy luận |
 | `forecast_metrics.py` | numpy, pandas | Quy ước file dự đoán; MAE/RMSE; sai số dự báo thiếu/thừa; theo khoảng dự báo, kịch bản, service; cửa sổ đầu spike; sign test theo run |

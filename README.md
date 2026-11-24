@@ -308,7 +308,7 @@ Pha K là **bộ nhớ dùng chung** của vòng lặp: các pha khác đọc ng
 
 **Vòng phản hồi của Knowledge.** Phần này giúp K không chỉ là nơi lưu trữ:
 1. **Giám sát độ chính xác online:** controller so sánh dự báo $\hat y_{t+k}$ với giá trị thực khi thời điểm $t+k$ đến, rồi xuất `autoscaler_forecast_error` (MAE trượt 10 phút).
-2. **Phát hiện drift và fallback:** nếu MAE online vượt $2\times$ MAE lúc kiểm thử offline trong một khoảng thời gian định trước, hoặc mất dữ liệu Monitor, controller chuyển sang **chế độ an toàn** (rule giống HPA: CPU 70%) và gắn cờ cần huấn luyện lại.
+2. **Phát hiện drift và thiếu dữ liệu:** nếu MAE online vượt $2\times$ MAE lúc kiểm thử offline trong một khoảng thời gian định trước, controller gắn cờ cần huấn luyện lại; nếu mất dữ liệu Monitor, controller giữ nguyên số replica (`hold`) cho tới khi dữ liệu phục hồi.
 3. **Huấn luyện lại offline** (phù hợp giới hạn "PPO huấn luyện offline" của đề cương): Decision Log và telemetry được xuất thành run mới theo đúng định dạng `dataset/raw/`, chạy lại notebook, huấn luyện, kiểm thử, rồi đăng ký phiên bản mới vào Model Registry.
 4. **Triển khai có kiểm soát:** phiên bản mới chạy ở chế độ **shadow** (dự báo và quyết định nhưng không thực thi, chỉ ghi log) cho đến khi chỉ số trong Decision Log đạt yêu cầu, sau đó mới chuyển sang `active`.
 

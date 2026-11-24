@@ -1,0 +1,61 @@
+# Chính sách của controller (Knowledge: SLO & Policy).
+# Thay <OBS_IP> bằng fixed IP của node-observability TRƯỚC khi apply, ví dụ:
+#   sed -i "s/<OBS_IP>/10.42.0.xx/g" configmap-policy.yaml
+#
+# Phạm vi: toàn bộ 10 service ứng dụng, trừ redis-cart (Redis đơn, stateful, giữ 1 replica).
+# Giới hạn replica mỗi service: 1..15 (cùng khoảng với HPA baseline).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoscaler-policy
+  namespace: autoscaler
+  labels:
+    part-of: gnn-rl-autoscaler
+data:
+  # shadow      : GAT-GRU dự báo -> PPO chọn Δ replica, KHÔNG scale (chỉ ghi log)
+  # gatgru-ppo  : GAT-GRU dự báo -> PPO chọn Δ replica -> lớp an toàn -> scale
+  # Thiếu dữ liệu (mất Prometheus, hoặc mất Jaeger jaeger_fail_cycles_before_hold chu kỳ): giữ nguyên replica
+  mode: "shadow"
+  namespace: "online-boutique"
+  prometheus_url: "http://<OBS_IP>:9090"
+  jaeger_url: "http://<OBS_IP>:16686"
+  step_sec: "10"
+  decision_period_sec: "30"
+
+  # Controller cần 18 bước (180s) lịch sử mới dự báo được. Khi khởi động, nạp lại 180s gần nhất
+  # từ Prometheus/Jaeger thay vì chờ; set-context.sh vẫn chờ tối thiểu 200s cho chắc.
+  history_steps: "18"
+  restore_history_on_start: "true"
+
+  # 10 service được scale. Thứ tự này khớp observation_contract.json.
+  scaled_services: "frontend,cartservice,checkoutservice,currencyservice,productcatalogservice,recommendationservice,adservice,emailservice,paymentservice,shippingservice"
+  fixed_services: "redis-cart"
+
+  min_replicas: "1"
+  max_replicas: "15"
+  # Trần TỔNG số replica của 10 service được scale (không tính redis-cart). 10 x 15 = 150 pod
+  # không thể xếp vừa 2 worker. Giá trị 26 rút từ dataset: khi thu dữ liệu HPA muốn tới
+  # 33 replica nhưng chỉ 26 pod sẵn sàng cùng lúc, tức cụm hết chỗ.
+  # Đây là giá trị TƯƠNG ĐỐI: đo lại bằng "kubectl describe nodes" và chỉnh cùng giá trị ở
+  # observation_contract.json (replica_bounds.max_total).
+  max_total_replicas: "26"
+  # |Δ| tối đa mỗi quyết định của PPO. Phải khớp action space trong hợp đồng (Δ ∈ {-2..+2}).
+  max_step: "2"
+  scale_down_cooldown_sec: "120"
+
+  slo_latency_p95_ms: "300"
+  slo_error_rate: "0.01"
+
+  gatgru_checkpoint: "/models/gatgru/v05/gatgru_selected_model_seed_0.pt"
+  gatgru_dir: "/models/gatgru/v05"
+  ppo_policy: "/models/ppo/v00-dummy/policy.zip"
+  ppo_dir: "/models/ppo/v00-dummy"
+  # Chặn dùng PPO mẫu (training_meta.json có "dummy": true) ở chế độ gatgru-ppo.
+  allow_active_with_dummy: "false"
+
+  # Tên field manager khi PATCH deployments/scale. Nhờ đó managedFields của Deployment ghi
+  # rõ controller là bên đã đặt spec.replicas (bằng chứng triển khai, xem collect-evidence.sh).
+  field_manager: "gnn-rl-autoscaler"
+
+  jaeger_fail_cycles_before_hold: "3"
+  decision_log_dir: "/decision-log"

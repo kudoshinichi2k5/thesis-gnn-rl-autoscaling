@@ -1,0 +1,30 @@
+# Hai PVC dùng StorageClass local-path mặc định của K3s.
+# Dữ liệu nằm trên node mà pod đầu tiên dùng PVC được xếp vào (node-app, nhờ nodeSelector).
+# Xóa namespace autoscaler sẽ xóa cả PVC và dữ liệu.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: models
+  namespace: autoscaler
+  labels:
+    part-of: gnn-rl-autoscaler
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: decision-log
+  namespace: autoscaler
+  labels:
+    part-of: gnn-rl-autoscaler
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
