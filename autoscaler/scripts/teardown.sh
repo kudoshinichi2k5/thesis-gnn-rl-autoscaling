@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Gỡ toàn bộ autoscaler khỏi cụm. Chạy trên node-app (cần sudo).
 # Usage:
-#   bash teardown.sh                          # gỡ khi chỉ dùng shadow (cụm chưa bị thay đổi)
-#   bash teardown.sh --restore-hpa <SNAP_DIR> # gỡ và khôi phục HPA từ snapshot (sau khi đã chạy active)
+#   bash teardown.sh                      # gỡ khi chỉ dùng shadow (cụm chưa bị thay đổi)
+#   bash teardown.sh --restore <SNAP_DIR> # gỡ và khôi phục trạng thái trong snapshot (sau khi đã chạy active):
+#                                         # HPA như snapshot (kể cả khi snapshot không có HPA) và số replica
+#   (--restore-hpa là tên cũ của --restore, vẫn dùng được)
 #
-# Thứ tự: dừng controller -> (khôi phục HPA) -> xóa Role/RoleBinding -> xóa namespace -> gỡ image.
+# Thứ tự: dừng controller -> (khôi phục trạng thái) -> xóa Role/RoleBinding -> xóa namespace -> gỡ image.
 # Không xóa thư mục ~/autoscaler-bundle và ~/snapshots (xóa tay khi chắc chắn không cần).
 set -euo pipefail
 
@@ -17,13 +19,15 @@ RESTORE_SNAP=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --restore-hpa) RESTORE_SNAP="${2:?thiếu đường dẫn snapshot}"; shift 2 ;;
+    --restore|--restore-hpa) RESTORE_SNAP="${2:?thiếu đường dẫn snapshot}"; shift 2 ;;
     *) echo "Tham số không hợp lệ: $1" >&2; exit 2 ;;
   esac
 done
+RESTORE_SNAP="${RESTORE_SNAP/#\~/$HOME}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
-if [[ -n "$RESTORE_SNAP" && ! -f "$RESTORE_SNAP/hpa.restore.json" ]]; then
-  echo "Không thấy $RESTORE_SNAP/hpa.restore.json" >&2; exit 1
+if [[ -n "$RESTORE_SNAP" && ! ( -f "$RESTORE_SNAP/hpa.restore.json" && -f "$RESTORE_SNAP/replicas.txt" ) ]]; then
+  echo "Không thấy $RESTORE_SNAP/hpa.restore.json hoặc replicas.txt" >&2; exit 1
 fi
 
 echo "[1/5] Dừng controller..."
@@ -35,11 +39,10 @@ else
 fi
 
 if [[ -n "$RESTORE_SNAP" ]]; then
-  echo "[2/5] Khôi phục HPA từ $RESTORE_SNAP ..."
-  k apply -f "$RESTORE_SNAP/hpa.restore.json"
-  k -n "$NS_APP" get hpa
+  echo "[2/5] Khôi phục trạng thái trong $RESTORE_SNAP (HPA và số replica)..."
+  bash "$SCRIPT_DIR/set-context.sh" restore --yes --snap "$RESTORE_SNAP"
 else
-  echo "[2/5] Không khôi phục HPA (không truyền --restore-hpa)"
+  echo "[2/5] Không khôi phục trạng thái (không truyền --restore)"
 fi
 
 echo "[3/5] Xóa Role/RoleBinding trong $NS_APP theo nhãn..."
@@ -57,4 +60,3 @@ else
 fi
 
 echo "Xong. Chạy verify-clean.sh <SNAP_DIR> để đối chiếu với snapshot."
-echo "Nếu đã chạy active, đối chiếu cột DESIRED trong replicas.txt của snapshot với: kubectl -n $NS_APP get deploy"

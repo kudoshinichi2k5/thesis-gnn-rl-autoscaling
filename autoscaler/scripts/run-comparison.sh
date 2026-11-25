@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Kiểm tra NGẮN: chạy cùng một trace tải (bộ sinh tải của dataset) trên nhiều ngữ cảnh điều khiển:
-#   hpa         : HPA truyền thống của cụm (khôi phục từ snapshot)
+#   hpa         : HPA baseline, áp từ manifest đã chép lên node-app (--hpa-manifest)
 #   autoscaler  : controller GAT-GRU + PPO (HPA tắt)
+# Kết thúc: cụm về đúng trạng thái trong snapshot (--snap), kể cả khi trạng thái ban đầu là HPA tắt.
 # Chạy trên MÁY BUILD, điều khiển qua SSH:
 #   node-app     -> set-context.sh (đổi ngữ cảnh), collect-evidence.sh (bằng chứng triển khai)
 #   node-loadgen -> run-eval.sh (phát tải bằng load-testing/run-scenario.sh)
@@ -16,6 +17,7 @@
 #
 # Usage:
 #   bash run-comparison.sh --node-app <user@host> --loadgen <user@host> --snap <SNAP_DIR_trên_node-app> \
+#        --hpa-manifest <FILE_trên_node-app (bắt buộc khi có ngữ cảnh hpa)> \
 #        [--preset short-mmpp|short-nhpp] [--contexts "hpa autoscaler"] [--scenarios "mmpp"] \
 #        [--reps 1] [--seed-base 2029] [--duration 900] [--results-base ~/dataset/raw-eval] \
 #        [--key ~/.ssh/kltn_autoscaling] [--allow-dummy] [--no-restore] [--dry-run] --yes
@@ -24,7 +26,7 @@
 # Không có --yes script chỉ in kế hoạch rồi thoát.
 set -euo pipefail
 
-NODE_APP=""; LOADGEN=""; SNAP=""; KEY="$HOME/.ssh/kltn_autoscaling"
+NODE_APP=""; LOADGEN=""; SNAP=""; HPA_MANIFEST=""; KEY="$HOME/.ssh/kltn_autoscaling"
 SCENARIOS="mmpp"; REPS=1; SEED_BASE=2029; DURATION=900
 CONTEXTS="hpa autoscaler"; RESULTS_BASE='~/dataset/raw-eval'; EVIDENCE_BASE='~/evidence'
 ALLOW_DUMMY=0; RESTORE=1; DRY=0; YES=0
@@ -42,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --node-app) NODE_APP="$2"; shift 2 ;;
     --loadgen) LOADGEN="$2"; shift 2 ;;
     --snap) SNAP="$2"; shift 2 ;;
+    --hpa-manifest) HPA_MANIFEST="$2"; shift 2 ;;
     --key) KEY="$2"; shift 2 ;;
     --contexts) CONTEXTS="$2"; shift 2 ;;
     --scenarios) SCENARIOS="$2"; shift 2 ;;
@@ -53,7 +56,7 @@ while [[ $# -gt 0 ]]; do
     --no-restore) RESTORE=0; shift ;;
     --dry-run) DRY=1; shift ;;
     --yes) YES=1; shift ;;
-    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,27p' "$0"; exit 0 ;;
     *) echo "Tham số không hợp lệ: $1" >&2; exit 2 ;;
   esac
 done
@@ -63,6 +66,9 @@ done
 for s in $SCENARIOS; do [[ "$s" =~ ^(nhpp|mmpp|pareto|onoff)$ ]] || { echo "Kịch bản không hợp lệ: $s" >&2; exit 2; }; done
 for c in $CONTEXTS; do [[ "$c" =~ ^(hpa|autoscaler)$ ]] || { echo "Ngữ cảnh không hợp lệ: $c" >&2; exit 2; }; done
 [[ "$CONTEXTS" == *hpa* ]] || echo "LƯU Ý: không có ngữ cảnh hpa, sẽ không có mốc so sánh." >&2
+if [[ "$CONTEXTS" == *hpa* && -z "$HPA_MANIFEST" ]]; then
+  echo "Ngữ cảnh hpa cần --hpa-manifest <FILE trên node-app> (snapshot chỉ dùng để khôi phục trạng thái ban đầu)" >&2; exit 2
+fi
 
 SSH_OPTS=(-i "$KEY" -o BatchMode=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=6)
 rssh() { local host="$1"; shift; ssh "${SSH_OPTS[@]}" "$host" "$@"; }
@@ -84,6 +90,8 @@ echo "Độ dài run    : ${DURATION}s, số lần lặp: $REPS"
 echo "Tổng số run   : $TOTAL_RUNS, ước tính khoảng $(( EST_MIN / 60 )) giờ $(( EST_MIN % 60 )) phút"
 for s in $SCENARIOS; do echo "Kết quả $s   : loadgen:$(root_of "$s")/<ngữ_cảnh>/$s/run_XX"; done
 echo "Bằng chứng    : node-app:${EVIDENCE_BASE}/<kịch_bản>-seed${FIRST_SEED}-<ngữ_cảnh>-rep<k>/"
+[[ -n "$HPA_MANIFEST" ]] && echo "HPA baseline  : node-app:${HPA_MANIFEST}"
+echo "Khôi phục     : node-app:${SNAP} (trạng thái ban đầu)"
 if [[ "$ALLOW_DUMMY" == "1" ]]; then echo "LƯU Ý: PPO MẪU (dummy): chỉ chứng minh đường ống chạy, không quy cải thiện cho PPO."; fi
 if [[ "$DRY" == "1" ]]; then echo "(dry-run: không thực thi gì)"; exit 0; fi
 if [[ "$YES" != "1" ]]; then echo; echo "Chưa chạy. Thêm --yes sau khi đã được người phụ trách cụm đồng ý."; exit 1; fi
@@ -92,10 +100,18 @@ if [[ "$YES" != "1" ]]; then echo; echo "Chưa chạy. Thêm --yes sau khi đã 
 echo "[preflight] SSH tới node-app và loadgen..."
 rssh "$NODE_APP" 'sudo -n true' || { echo "node-app: không có sudo không mật khẩu" >&2; exit 1; }
 rssh "$LOADGEN" 'test -f ~/load-testing/run-scenario.sh' || { echo "loadgen: chưa rsync load-testing/" >&2; exit 1; }
-rssh "$NODE_APP" "test -f '$SNAP/hpa.restore.json'" || { echo "node-app: không thấy $SNAP/hpa.restore.json" >&2; exit 1; }
+rssh "$NODE_APP" "test -f $SNAP/hpa.restore.json -a -f $SNAP/replicas.txt" \
+  || { echo "node-app: snapshot $SNAP thiếu hpa.restore.json hoặc replicas.txt" >&2; exit 1; }
+if [[ "$CONTEXTS" == *hpa* ]]; then
+  rssh "$NODE_APP" "grep -q 'kind: *HorizontalPodAutoscaler' $HPA_MANIFEST" \
+    || { echo "node-app: không thấy $HPA_MANIFEST hoặc file không chứa HorizontalPodAutoscaler" >&2; exit 1; }
+  hpa_max="$(rssh "$NODE_APP" "grep -E '^ *maxReplicas:' $HPA_MANIFEST | awk '{print \$2}' | sort -u | tr '\n' ' '")"
+  echo "[preflight] HPA baseline: $(rssh "$NODE_APP" "grep -c 'kind: *HorizontalPodAutoscaler' $HPA_MANIFEST") HPA, maxReplicas = ${hpa_max}"
+  [[ "$hpa_max" == "15 " ]] || echo "LƯU Ý: maxReplicas của HPA baseline khác 15 (autoscaler dùng 1..15): so sánh không cùng phạm vi" >&2
+fi
 if [[ "$CONTEXTS" == *autoscaler* ]]; then
   rssh "$NODE_APP" 'sudo k3s kubectl -n autoscaler get deploy gnn-rl-autoscaler >/dev/null' \
-    || { echo "node-app: controller chưa được triển khai (Bước 8 của README)" >&2; exit 1; }
+    || { echo "node-app: controller chưa được triển khai (Bước 8 của DEPLOY_AUTOSCALER_MODELS.md)" >&2; exit 1; }
 fi
 
 echo "[preflight] đồng bộ script lên node-app và loadgen..."
@@ -123,19 +139,19 @@ for s in $SCENARIOS; do
   if [[ "$ref" != "0" ]]; then echo "[preflight] $s đã có $ref run mỗi ngữ cảnh trong $(root_of "$s"); run mới dùng seed tiếp theo."; fi
 done
 
-# Chỉ khôi phục HPA (trạng thái ban đầu của cụm) khi MỌI run đã xong. Khi có lỗi hoặc bị ngắt,
+# Chỉ khôi phục trạng thái ban đầu (snapshot) khi MỌI run đã xong. Khi có lỗi hoặc bị ngắt,
 # KHÔNG tự bật HPA: HPA không phải cơ chế dự phòng của autoscaler chủ động. Cụm giữ nguyên ngữ
 # cảnh đang chạy để kiểm tra lỗi; người vận hành tự quyết định bước tiếp theo.
 COMPLETED=0
 on_exit() {
   if [[ "$COMPLETED" != "1" ]]; then
-    echo "[cleanup] dừng giữa chừng: KHÔNG khôi phục HPA. Cụm giữ nguyên ngữ cảnh hiện tại." >&2
+    echo "[cleanup] dừng giữa chừng: KHÔNG khôi phục, KHÔNG bật HPA. Cụm giữ nguyên ngữ cảnh hiện tại." >&2
     echo "[cleanup] Sau khi xử lý lỗi, khôi phục trạng thái ban đầu bằng tay trên node-app:" >&2
-    echo "          bash ~/autoscaler-scripts/set-context.sh hpa --yes --snap $SNAP" >&2
+    echo "          bash ~/autoscaler-scripts/set-context.sh restore --yes --snap $SNAP" >&2
   elif [[ "$RESTORE" == "1" ]]; then
-    echo "[cleanup] hoàn tất: khôi phục trạng thái ban đầu (HPA từ snapshot)..."
-    rssh "$NODE_APP" "bash ~/autoscaler-scripts/set-context.sh hpa --yes --snap '$SNAP'" || \
-      echo "[cleanup] KHÔNG khôi phục được tự động; chạy tay: set-context.sh hpa --yes --snap $SNAP" >&2
+    echo "[cleanup] hoàn tất: khôi phục trạng thái ban đầu trong snapshot..."
+    rssh "$NODE_APP" "bash ~/autoscaler-scripts/set-context.sh restore --yes --snap $SNAP" || \
+      echo "[cleanup] KHÔNG khôi phục được tự động; chạy tay: set-context.sh restore --yes --snap $SNAP" >&2
   else
     echo "[cleanup] bỏ qua khôi phục (--no-restore). Cụm đang ở ngữ cảnh cuối cùng."
   fi
@@ -147,7 +163,7 @@ run_context() {  # $1=ngữ cảnh $2=kịch bản $3=lần lặp
   tag="${scen}-seed${FIRST_SEED}-${ctx}-rep${rep}"
   root="$(root_of "$scen")"
   case "$ctx" in
-    hpa)        label="hpa";        ctx_args="--snap '$SNAP'" ;;
+    hpa)        label="hpa";        ctx_args="--hpa-manifest $HPA_MANIFEST" ;;
     autoscaler) label="$PPO_LABEL"; ctx_args=""; if [[ "$ALLOW_DUMMY" == "1" ]]; then ctx_args="--allow-dummy"; fi ;;
   esac
 

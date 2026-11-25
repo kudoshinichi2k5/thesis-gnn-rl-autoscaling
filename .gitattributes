@@ -1,0 +1,4 @@
+# Script và Dockerfile chạy trên Linux: luôn checkout với LF, kể cả trên Windows (core.autocrlf=true).
+# CRLF làm bash lỗi "$'\r': command not found" / "set: pipefail: invalid option name".
+*.sh        text eol=lf
+Dockerfile  text eol=lf
